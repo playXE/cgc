@@ -1,6 +1,6 @@
 pub trait Collectable {
     /// Get all children GC objects from `self`
-       fn child(&self) -> Vec<GCValue<dyn Collectable>> {
+    fn child(&self) -> Vec<GCValue<dyn Collectable>> {
         vec![]
     }
     #[doc(hidden)]
@@ -133,7 +133,7 @@ impl CopyGC {
         s
     }
     /// Get space from where we copy objects
-    pub fn from_space(&self) -> Region {
+    pub(crate) fn from_space(&self) -> Region {
         if self.alloc.limit() == self.separator {
             Region::new(self.total.start, self.separator)
         } else {
@@ -141,7 +141,7 @@ impl CopyGC {
         }
     }
     /// Get space where we need copy objects
-    pub fn to_space(&self) -> Region {
+    pub(crate) fn to_space(&self) -> Region {
         if self.alloc.limit() == self.separator {
             Region::new(self.separator, self.total.end)
         } else {
