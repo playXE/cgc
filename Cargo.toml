@@ -6,7 +6,7 @@ edition = "2018"
 description = "Copying garbage collector"
 repository = "https://github.com/playXE/cgc"
 readme = "README.md"
-keywords = ["gc","garbage-collector","garbage collector"]
+keywords = ["gc","garbage-collector"]
 license = "MIT"
 
 
