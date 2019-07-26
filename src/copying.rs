@@ -1,5 +1,8 @@
 pub trait Collectable {
     /// Get all children GC objects from `self`
+       fn child(&self) -> Vec<GCValue<dyn Collectable>> {
+        vec![]
+    }
     #[doc(hidden)]
     fn size(&self) -> usize {
         0
