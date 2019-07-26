@@ -36,7 +36,7 @@ impl Collectable for A {
     }
 }
 
-pub struct Foo(Vec<i32>);
+pub struct Foo(Vec<A>);
 
 impl Collectable {
     fn child(&self) -> Vec<GCValue<dyn Collectable>> {
