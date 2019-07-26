@@ -38,7 +38,7 @@ impl Collectable for A {
 
 pub struct Foo(Vec<A>);
 
-impl Collectable {
+impl Collectable for Foo {
     fn child(&self) -> Vec<GCValue<dyn Collectable>> {
         self.0.iter().map(|x| *x).collect() 
     }
