@@ -1,10 +1,9 @@
 pub trait Collectable {
     /// Get all children GC objects from `self`
-    fn child(&self) -> Vec<GCValue<dyn Collectable>> {
-        vec![]
+    #[doc(hidden)]
+    fn size(&self) -> usize {
+        0
     }
-    /// Get object size. Since trait objects do not support `Sized` you should implement this method that will return size of your type.
-    fn size(&self) -> usize;
 }
 
 use std::cell::{Ref, RefCell, RefMut};
@@ -24,7 +23,7 @@ use std::marker::Unsize;
 use std::ops::CoerceUnsized;
 
 impl<T: Collectable + ?Sized + Unsize<U>, U: Collectable + ?Sized> CoerceUnsized<GCValue<U>>
-    for GCValue<T>
+for GCValue<T>
 {
 }
 struct InGC<T: Collectable + ?Sized> {
@@ -131,7 +130,7 @@ impl CopyGC {
         s
     }
     /// Get space from where we copy objects
-    pub(crate) fn from_space(&self) -> Region {
+    pub fn from_space(&self) -> Region {
         if self.alloc.limit() == self.separator {
             Region::new(self.total.start, self.separator)
         } else {
@@ -139,7 +138,7 @@ impl CopyGC {
         }
     }
     /// Get space where we need copy objects
-    pub(crate) fn to_space(&self) -> Region {
+    pub fn to_space(&self) -> Region {
         if self.alloc.limit() == self.separator {
             Region::new(self.separator, self.total.end)
         } else {
@@ -206,7 +205,7 @@ impl CopyGC {
                     if child_ptr.is_null() {
                         panic!();
                     }
-                    // If current space contains object then mvoe it to new space
+                    // If current space contains object then move it to new space
                     if from_space.contains(std::mem::transmute_copy(&child_ptr)) {
                         *(child_ptr as *mut *mut InGC<dyn Collectable>) = std::mem::transmute_copy(
                             &self.copy(std::mem::transmute_copy(&child_ptr), &mut top),
@@ -214,7 +213,8 @@ impl CopyGC {
                     }
                 }
                 i = i + 1;
-                scan = scan.offset((*object).size());
+                let real_size = std::mem::size_of_val(&*object);
+                scan = scan.offset(real_size);
             }
         }
         self.alloc.reset(top, to_space.end);
@@ -246,12 +246,11 @@ impl CopyGC {
         unsafe {
             // if this object already moved to new space return it's address
             if (*obj).fwd.is_non_null() {
-                assert!((*obj).fwd.is_non_null());
                 return (*obj).fwd;
             }
 
             let addr = *top;
-            let size = (*obj).size();
+            let size = std::mem::size_of_val(&*obj);
             // copy object to new space
             (*obj).copy_to(addr, size);
             // move pointer
