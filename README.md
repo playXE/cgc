@@ -42,10 +42,6 @@ impl Collectable for Foo {
     fn child(&self) -> Vec<GCValue<dyn Collectable>> {
         self.0.iter().map(|x| *x).collect() 
     }
-
-    fn size(&self) -> usize {
-        std::mem::size_of::<Self>()
-    }
 }
 
 fn main() {
@@ -54,4 +50,18 @@ fn main() {
     foo.borrow_mut().0.push(A);
 }
 
+```
+
+# Generational GC
+There are also available generational copying garbage collector in `generational` module. 
+To use it you should implement `Collectable` from `generational` module to your type:
+```rust
+impl Collectable for Object {
+    fn visit(&self,gc: &mut GenerationalGC) {
+       if self.proto.is_some() {
+            gc.push_grey(self.proto.unwrap()); // `proto` is GCValue<Object>
+       }
+        self.table.visit(gc); // 'table' is `HashMap<Key,GCValue<Value>>`
+    }   
+}
 ```

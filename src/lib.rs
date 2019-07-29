@@ -3,6 +3,7 @@
 
 pub mod bump;
 pub mod copying;
+pub mod generational;
 
 pub const K: usize = 1024;
 pub const M: usize = K * K;
