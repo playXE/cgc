@@ -2,7 +2,8 @@ use cgc::generational::*;
 
 fn main() {
     let v = gc_allocate(vec![]);
-    v.borrow_mut().push(vec![String::from("Hello,World!")]);
+    gc_add_root(v);
+    v.borrow_mut().push(vec![gc_allocate(String::from("Hello,World!"))]);
     gc_enable_stats();
     println!("HELLO");
     gc_collect_not_par();

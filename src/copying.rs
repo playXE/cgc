@@ -245,7 +245,6 @@ impl CopyGC {
 
     fn copy(&self, obj: *mut InGC<dyn Collectable>, top: &mut Address) -> Address {
         let obj: *mut InGC<dyn Collectable> = obj;
-        assert!(!obj.is_null());
         unsafe {
             // if this object already moved to new space return it's address
             if (*obj).fwd.is_non_null() {
@@ -258,10 +257,9 @@ impl CopyGC {
             (*obj).copy_to(addr, size);
             // move pointer
             *top = top.offset(size);
-            assert!(top.is_non_null());
             // set forward address if we will visit this object again
             (*obj).fwd = addr;
-            assert!(addr.is_non_null());
+
 
             addr
         }

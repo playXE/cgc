@@ -204,6 +204,10 @@ impl GenerationalGC {
         }
     }
 
+    pub fn push_grey(&mut self,x: GCValue<dyn Collectable>) {
+        self.grey.push(x);
+    }
+
     fn in_current_space(&self,value: &InGC<dyn Collectable>) -> bool {
         return (self.gc_type == GCType::OldSpace && value.gen > 5)
         || (self.gc_type == GCType::NewSpace && value.gen < 5)
@@ -234,7 +238,7 @@ impl GenerationalGC {
         let top = to_space.start;
         let scan = top;
         self.tmp_space = top;
-        for i in 0..self.roots.len() {
+            for i in 0..self.roots.len() {
             let root = self.roots[i];
             self.grey.push(root);
             self.process_grey();
@@ -255,12 +259,13 @@ impl GenerationalGC {
 
             i = i + 1;
         }
-        while !self.black.is_empty() {
-            let value = self.black.remove(0);
+        for item in self.black.iter() {
+            let value = item;
             unsafe {
                 (*value.ptr).reset_soft_mark();
             }
         }
+        self.black.clear();
 
         self.tmp_space = Address::null();
         self.alloc.reset(top, to_space.end);
