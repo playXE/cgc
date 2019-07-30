@@ -67,17 +67,46 @@ impl<T: Collectable + ?Sized> GCValue<T> {
     fn fwd(&self) -> Address {
         unsafe { (*self.ptr).fwd }
     }
-
-    fn get_ptr(&self) -> *mut InGC<T> {
+    #[inline]
+    unsafe fn get_ptr(&self) -> *mut InGC<T> {
         self.ptr
     }
-
+    /// Compare `self` pointer and `other` pointer
+    /// ```rust
+    /// use cgc::{gc_allocate,gc_collect_not_par};
+    /// let a = gc_allocate(0);
+    /// let b = a.clone();
+    /// assert!(a.ref_equal(&b));
+    /// gc_collect_not_par();
+    /// ```
+    #[inline]
+    pub fn ref_equal(&self,other: &GCValue<T>) -> bool {
+        unsafe {self.get_ptr() as *const u8 == other.get_ptr() as *const u8}
+    }
+    /// Borrow value as immutable reference.
+    /// Function will panic if current value borrowed as mutable somewhere.
+    /// ```rust
+    /// use cgc::{gc_allocate,gc_collect_not_par};
+    /// let val = gc_allocate(42);
+    /// assert_eq!(*val.borrow(),42);
+    /// gc_collect_not_par();
+    /// ```
+    #[inline]
     pub fn borrow(&self) -> Ref<'_, T> {
         unsafe { (*self.ptr).ptr.borrow() }
     }
-
-    pub fn borrow_mut(&self) -> RefMut<'_, T> {
-        unsafe { (*self.ptr).ptr.borrow_mut() }
+    /// Borrow value as mutable,will panic if value already borrowed as mutable
+    /// ```rust
+    /// use cgc::{gc_allocate,gc_collect_not_par};
+    /// let a = gc_allocate(0);
+    /// *a.borrow_mut() = 42;
+    /// assert_eq!(*a.borrow(),42);
+    ///
+    /// ```
+    pub fn borrow_mut(&self) -> RefMut<'_,T> {
+        unsafe {
+            (*self.ptr).ptr.borrow_mut()
+        }
     }
 }
 

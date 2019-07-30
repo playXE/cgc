@@ -99,14 +99,43 @@ pub struct GCValue<T: Collectable + ?Sized> {
 }
 
 impl<T: Collectable + ?Sized> GCValue<T> {
-    fn get_ptr(&self) -> *mut InGC<T> {
+    #[inline]
+    unsafe fn get_ptr(&self) -> *mut InGC<T> {
         self.ptr
     }
-
+    /// Compare `self` pointer and `other` pointer
+    /// ```rust
+    /// use cgc::generational::{gc_allocate,gc_collect_not_par};
+    /// let a = gc_allocate(0);
+    /// let b = a.clone();
+    /// assert!(a.ref_equal(&b));
+    /// gc_collect_not_par();
+    /// ```
+    #[inline]
+    pub fn ref_equal(&self,other: &GCValue<T>) -> bool {
+        unsafe {self.get_ptr() as *const u8 == other.get_ptr() as *const u8}
+    }
+    /// Borrow value as immutable reference.
+    /// Function will panic if current value borrowed as mutable somewhere.
+    /// ```rust
+    /// use cgc::generational::{gc_allocate,gc_collect_not_par};
+    /// let val = gc_allocate(42);
+    /// assert_eq!(*val.borrow(),42);
+    /// gc_collect_not_par();
+    /// ```
+    #[inline]
     pub fn borrow(&self) -> Ref<'_, T> {
         unsafe { (*self.ptr).ptr.borrow() }
     }
-
+    /// Borrow value as mutable,will panic if value already borrowed as mutable
+    /// ```rust
+    /// use cgc::generational::{gc_allocate,gc_collect_not_par};
+    /// let a = gc_allocate(0);
+    /// *a.borrow_mut() = 42;
+    /// assert_eq!(*a.borrow(),42);
+    ///
+    /// ```
+    #[inline]
     pub fn borrow_mut(&self) -> RefMut<'_, T> {
         unsafe { (*self.ptr).ptr.borrow_mut() }
     }
@@ -377,6 +406,12 @@ impl GenerationalGC {
     }
 }
 
+impl Drop for GenerationalGC {
+    fn drop(&mut self) {
+        munmap(self.total.start.to_ptr(),self.total.size());
+    }
+}
+
 use parking_lot::Mutex;
 
 lazy_static::lazy_static!(
@@ -472,6 +507,7 @@ impl<T: Collectable + PartialEq> PartialEq for GCValue<T> {
 }
 
 use std::cmp::{Ord, Ordering, PartialOrd};
+use crate::munmap;
 
 impl<T: Collectable + PartialOrd> PartialOrd for GCValue<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
