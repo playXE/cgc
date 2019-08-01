@@ -416,6 +416,13 @@ impl<T: Collectable + Ord + Eq> Ord for GCValue<T> {
     }
 }
 
+use std::hash::{Hash,Hasher};
+impl<T: Hash + Collectable> Hash for GCValue<T> {
+    fn hash<H: Hasher>(&self,h: &mut H) {
+        self.borrow().hash(h);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::*;

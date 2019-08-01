@@ -521,3 +521,10 @@ impl<T: Collectable + Ord + Eq> Ord for GCValue<T> {
         self.borrow().cmp(&other.borrow())
     }
 }
+
+use std::hash::{Hash,Hasher};
+impl<T: Hash + Collectable> Hash for GCValue<T> {
+    fn hash<H: Hasher>(&self,h: &mut H) {
+        self.borrow().hash(h);
+    }
+}
