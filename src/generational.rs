@@ -172,6 +172,7 @@ pub struct GenerationalGC {
     alloc: BumpAllocator,
     roots: Vec<GCValue<dyn Collectable>>,
     allocated: Vec<GCValue<dyn Collectable>>,
+    to_process: Vec<GCValue<dyn Collectable>>,
     grey: Vec<GCValue<dyn Collectable>>,
     black: Vec<GCValue<dyn Collectable>>,
     tmp_space: Address,
@@ -195,6 +196,7 @@ impl GenerationalGC {
             roots: vec![],
             stats: false,
             allocated: vec![],
+            to_process: vec![],
             alloc: BumpAllocator::new(heap_start, separator),
             black: vec![],
             grey: vec![],
@@ -274,7 +276,17 @@ impl GenerationalGC {
         }
         let top = self.tmp_space;
         self.tmp_space = scan;
-        let mut i = 0;
+        for i in 0..self.to_process.len() {
+            let object = self.to_process[i].ptr;
+            self.grey.push(self.to_process[i]);
+            self.process_grey();
+            unsafe {
+                let real_size = std::mem::size_of_val(&*object);
+                self.tmp_space = self.tmp_space.offset(real_size);
+            }
+        }
+        self.to_process.clear();
+        /*let mut i = 0;
         while scan < top {
             let value = self.allocated[i];
             let object = value.ptr;
@@ -287,7 +299,7 @@ impl GenerationalGC {
 
 
             i = i + 1;
-        }
+        }*/
         for item in self.black.iter() {
             let value = item;
             unsafe {
@@ -365,6 +377,7 @@ impl GenerationalGC {
                 if !self.in_current_space(inner) {
                     if !inner.is_soft_marked() {
                         inner.set_soft_mark();
+                        self.to_process.push(value);
                         self.black.push(value);
                         unsafe {
                             inner.ptr.borrow().visit(self);
