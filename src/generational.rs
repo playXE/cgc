@@ -276,16 +276,7 @@ impl GenerationalGC {
         }
         let top = self.tmp_space;
         self.tmp_space = scan;
-        for i in 0..self.to_process.len() {
-            let object = self.to_process[i].ptr;
-            self.grey.push(self.to_process[i]);
-            self.process_grey();
-            unsafe {
-                let real_size = std::mem::size_of_val(&*object);
-                self.tmp_space = self.tmp_space.offset(real_size);
-            }
-        }
-        self.to_process.clear();
+
         /*let mut i = 0;
         while scan < top {
             let value = self.allocated[i];
@@ -306,8 +297,20 @@ impl GenerationalGC {
                 (*value.ptr).reset_soft_mark();
             }
         }
+        self.grey.clear();
         self.black.clear();
-
+        for i in 0..self.roots.len() {
+            let root = self.roots[i];
+            self.grey.push(root);
+            root.borrow().visit(self);
+            
+        }
+        for i in 0..self.grey.len() {
+            let grey: GCValue<dyn Collectable> = self.grey[i];
+            unsafe {
+                (*grey.ptr).marked = false;
+            }
+        }
         self.tmp_space = Address::null();
         self.alloc.reset(top, to_space.end);
 
@@ -377,11 +380,11 @@ impl GenerationalGC {
                 if !self.in_current_space(inner) {
                     if !inner.is_soft_marked() {
                         inner.set_soft_mark();
-                        self.to_process.push(value);
+                        
                         self.black.push(value);
-                        unsafe {
-                            inner.ptr.borrow().visit(self);
-                        }
+                       
+                        inner.ptr.borrow().visit(self);
+                        
 
                         continue;
                     }
@@ -393,12 +396,14 @@ impl GenerationalGC {
                 self.copy(inner as *mut _,&mut space);
                 self.tmp_space = space;
                 inner.fwd = new_addr;
-                if inner.is_marked() {
+                if !inner.is_marked() {
                     inner.set_mark(new_addr);
                 }
             } else {
                 inner.fwd = inner.get_mark();
-                inner.set_mark(inner.fwd);
+                if !inner.is_marked() {
+                    inner.set_mark(inner.fwd);
+                }
             }
         }
     }
