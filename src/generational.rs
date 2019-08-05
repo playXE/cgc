@@ -311,6 +311,7 @@ impl GenerationalGC {
                 (*grey.ptr).marked = false;
             }
         }
+        self.grey.clear();
         self.tmp_space = Address::null();
         self.alloc.reset(top, to_space.end);
 
