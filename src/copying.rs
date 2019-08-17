@@ -31,7 +31,9 @@ for GCValue<T>
 }
 struct InGC<T: Collectable + ?Sized> {
     fwd: Address,
-    ptr: RefCell<T>
+    marked: bool,
+    ptr: RefCell<T>,
+    
 }
 
 unsafe impl<T: Collectable + ?Sized + Send> Send for InGC<T> {}
@@ -57,6 +59,7 @@ impl<T: Collectable + ?Sized> InGC<T> {
 
 pub struct GCValue<T: Collectable + ?Sized> {
     ptr: *mut InGC<T>,
+    
 }
 
 impl<T: Collectable + ?Sized> GCValue<T> {
@@ -213,8 +216,55 @@ impl CopyGC {
         let old_size = self.alloc.top().offset_from(from_space.start);
         let mut top = to_space.start;
         let mut scan = top;
-        // Visit all roots and move them to new space
+        let prev_count = self.allocated.len();
+
         for i in 0..self.roots.len() {
+            let mut root = self.roots[i];
+            let root_ptr: *mut InGC<dyn Collectable> = root.ptr;
+            let ptr = unsafe { std::mem::transmute_copy(&root_ptr) };
+            if from_space.contains(ptr) {
+                let ptr2 = unsafe { std::mem::transmute_copy(&root_ptr) };
+                unsafe {
+                    (*root.ptr).marked = true;
+                    root.ptr = std::mem::transmute_copy(&self.copy(ptr2, &mut top));
+                    for child in (*root_ptr).ptr.borrow().child().iter() {
+                        (*child.ptr).marked = true;
+                    }
+                }
+            }
+        }
+        for i in 0..self.allocated.len() {
+            unsafe {
+                let object_ = self.allocated[i];
+                let object = object_.ptr;
+                if (*object).marked {
+                    let new_addr = std::mem::transmute_copy(&self.copy(object,&mut top));
+                    self.allocated[i].ptr = new_addr;
+                }
+                let real_size = std::mem::size_of_val(&*object);
+                scan = scan.offset(real_size);
+            }
+        }
+
+        for i in 0..self.allocated.len() {
+            unsafe {
+                if let Some(obj) = self.allocated.get_mut(i) {
+                    if (*obj.ptr).marked == false {
+                        obj.ptr = std::mem::transmute_copy(&std::ptr::null_mut::<usize>());
+                        self.allocated.remove(i);
+                    }
+                }
+            }
+        }
+        for i in 0..self.allocated.len() {
+            unsafe {
+                
+                (*self.allocated[i].ptr).marked = false;
+                
+            }
+        }
+        // Visit all roots and move them to new space
+        /*for i in 0..self.roots.len() {
             let mut root = self.roots[i];
             let root_ptr = root.ptr;
             let ptr = unsafe { std::mem::transmute_copy(&root_ptr) };
@@ -228,7 +278,7 @@ impl CopyGC {
         }
         let mut i = 0;
         // Visit all objects in current space then move them to new space if needed
-        while scan < top {
+        loop {
             unsafe {
                 let object: *mut InGC<dyn Collectable> = self.allocated[i].ptr;
                 assert!(!object.is_null());
@@ -248,7 +298,7 @@ impl CopyGC {
                 let real_size = std::mem::size_of_val(&*object);
                 scan = scan.offset(real_size);
             }
-        }
+        }*/
         self.alloc.reset(top, to_space.end);
 
         if self.stats {
@@ -260,6 +310,8 @@ impl CopyGC {
             } else {
                 (garbage as f64 / old_size as f64) * 100f64
             };
+             
+        
             println!(
                 "GC: {:.1} ms ({:.1} ns ), {}->{} size, {}/{:.0}% garbage",
                 start_time.to(end).num_milliseconds(),
@@ -269,6 +321,7 @@ impl CopyGC {
                 formatted_size(garbage),
                 garbage_ratio,
             );
+            //println!("Objects count before collection: {},after: {}",prev_count,self.allocated.len());
         }
     }
 
@@ -288,7 +341,9 @@ impl CopyGC {
             *top = top.offset(size);
             // set forward address if we will visit this object again
             (*obj).fwd = addr;
-
+            if !(*obj).marked {
+                (*obj).marked = true;
+            }
 
             addr
         }
@@ -306,6 +361,7 @@ impl CopyGC {
             unsafe {
                 ((*val_.ptr).fwd) = Address::null();
                 ((*val_.ptr).ptr) = RefCell::new(val);
+                ((*val_.ptr).marked)  = false;
             }
             self.allocated.push(val_);
             return val_;
@@ -319,6 +375,7 @@ impl CopyGC {
         unsafe {
             ((*val_.ptr).ptr) = RefCell::new(val);
             ((*val_.ptr).fwd) = Address::null();
+            ((*val_.ptr).marked)  = false;
         }
         self.allocated.push(val_);
         return val_;
