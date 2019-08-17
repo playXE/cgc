@@ -216,7 +216,6 @@ impl CopyGC {
         let old_size = self.alloc.top().offset_from(from_space.start);
         let mut top = to_space.start;
         let mut scan = top;
-        let prev_count = self.allocated.len();
 
         for i in 0..self.roots.len() {
             let mut root = self.roots[i];
@@ -248,11 +247,16 @@ impl CopyGC {
 
         for i in 0..self.allocated.len() {
             unsafe {
+                let mut remove_root = Option::None;
                 if let Some(obj) = self.allocated.get_mut(i) {
+                    remove_root = Some(*obj);
                     if (*obj.ptr).marked == false {
                         obj.ptr = std::mem::transmute_copy(&std::ptr::null_mut::<usize>());
                         self.allocated.remove(i);
                     }
+                }
+                if let Option::Some(r) = remove_root {
+                    self.remove_root(r);
                 }
             }
         }
