@@ -30,8 +30,7 @@ struct InGC<T: Collectable + ?Sized> {
     fwd: Address,
     collected: bool,
     marked: bool,
-    ptr: RefCell<T>,
-    
+    ptr: RefCell<T>,   
 }
 
 unsafe impl<T: Collectable + ?Sized + Send> Send for InGC<T> {}
@@ -40,20 +39,21 @@ unsafe impl<T: Collectable + ?Sized + Send> Send for GCValue<T> {}
 unsafe impl<T: Collectable + ?Sized + Sync> Sync for GCValue<T> {}
 
 impl<T: Collectable + ?Sized> InGC<T> {
-    fn copy_to(&self, dest: Address, size: usize) {
+    fn copy_to(&mut self, dest: Address, _size: usize) {
         unsafe {
+            let size = std::mem::size_of_val(&self);
             std::ptr::copy_nonoverlapping(
                 self as *const Self as *const u8,
                 dest.to_mut_ptr::<u8>(),
                 size,
-            )
+            );
+            //std::ptr::copy_nonoverlapping(self as *const Self  as *const *const Self as *mut *const u8, dest.to_mut_ptr::<u8>() as *mut *const u8, 8);
         }
     }
 }
 
 pub struct GCValue<T: Collectable + ?Sized> {
-    ptr: *mut InGC<T>,
-    
+    ptr: *mut InGC<T>,  
 }
 
 impl<T: Collectable + ?Sized> GCValue<T> {
@@ -105,6 +105,12 @@ impl<T: Collectable + ?Sized> GCValue<T> {
     pub fn borrow_mut(&self) -> RefMut<'_,T> {
         unsafe {
             (*self.ptr).ptr.borrow_mut()
+        }
+    }
+
+    pub fn set_marked(&self) {
+        unsafe {
+            (*self.ptr).marked = true;
         }
     }
 }
@@ -205,18 +211,18 @@ impl CopyGC {
         let old_size = self.alloc.top().offset_from(from_space.start);
         let mut top = to_space.start;
         let mut scan = top;
-        let prev_count = self.allocated.len();
         for i in 0..self.roots.len() {
-            let mut root = self.roots[i];
+            let root = self.roots[i];
             let root_ptr: *mut InGC<dyn Collectable> = root.ptr;
-            let ptr = unsafe { std::mem::transmute_copy(&root_ptr) };
+            let ptr = unsafe { std::mem::transmute_copy::<*mut InGC<dyn Collectable>,Address>(&root_ptr) };
             if from_space.contains(ptr) {
-                let ptr2 = unsafe { std::mem::transmute_copy(&root_ptr) };
+                
                 unsafe {
-                    (*root.ptr).marked = true;
-                    (*root.ptr).ptr.borrow().mark();
-                    root.ptr = std::mem::transmute_copy(&self.copy(ptr2, &mut top));
-                    
+                    (*root_ptr).marked = true;
+                    (*root_ptr).ptr.borrow().mark();
+                    //*root.ptr = std::mem::transmute_copy(&self.copy(ptr2, &mut top));
+                    let new_pointer = self.copy(root_ptr,&mut top);
+                    self.roots[i].ptr = std::mem::transmute_copy::<Address,*mut InGC<dyn Collectable>>(&new_pointer);
                     /*for child in (*root_ptr).ptr.borrow().child().iter() {
                         (*child.ptr).marked = true;
                     }*/
@@ -228,87 +234,41 @@ impl CopyGC {
                 let object_ = self.allocated[i];
                 let object = object_.ptr;
                 if (*object).marked {
-                    let new_addr = std::mem::transmute_copy(&self.copy(object,&mut top));
-                    self.allocated[i].ptr = new_addr;
+                    //*let new_addr = */std::mem::transmute_copy(&self.copy(object,&mut top));
+                    let new_pointer = self.copy(object,&mut top);
+                    self.allocated[i].ptr = std::mem::transmute_copy::<_,*mut InGC<dyn Collectable>>(&new_pointer);
+                    //self.allocated[i].ptr = new_addr;
                 }
+                let object_ = self.allocated[i];
+                let object = object_.ptr;
                 let real_size = std::mem::size_of_val(&*object);
+                
+
                 scan = scan.offset(real_size);
             }
         }
         let mut retained_pointers = vec![];
         self.allocated.retain(|x| {
-            retained_pointers.push(*x);
+            
             unsafe {
-                if !(*x.ptr).marked {
-                    (*x.ptr).collected = true;
+                if (*x.ptr).marked == false {
+                    //(*x.ptr).collected = true;
                     x.borrow_mut().destructor();
+                    retained_pointers.push(*x);
                 }
             }
             unsafe {(*x.ptr).marked}
         });
         for p in retained_pointers.iter() {
-            //println!("{:?}",p.ptr);
             self.remove_root(*p);
         }
-
-        /*for i in 0..self.allocated.len() {
-            unsafe {
-                let mut remove_root = Option::None;
-                if let Some(obj) = self.allocated.get_mut(i) {
-                    remove_root = Some(*obj);
-                    if (*obj.ptr).marked == false {
-                        obj.ptr = std::mem::transmute_copy(&std::ptr::null_mut::<usize>());
-                        self.allocated.remove(i);
-                    }
-                }
-                if let Option::Some(r) = remove_root {
-                    self.remove_root(r);
-                }
-            }
-        }*/
         for i in 0..self.allocated.len() {
             unsafe {
-                
-                (*self.allocated[i].ptr).marked = false;
+                (&mut(*self.allocated[i].ptr).fwd as *mut Address).write(Address::null());
+                (&mut(*self.allocated[i].ptr).marked as *mut bool).write( false);
                 
             }
         }
-        // Visit all roots and move them to new space
-        /*for i in 0..self.roots.len() {
-            let mut root = self.roots[i];
-            let root_ptr = root.ptr;
-            let ptr = unsafe { std::mem::transmute_copy(&root_ptr) };
-            // if current space contains root move it to new space
-            if from_space.contains(ptr) {
-                let ptr2 = unsafe { std::mem::transmute_copy(&root_ptr) };
-                unsafe {
-                    root.ptr = std::mem::transmute_copy(&self.copy(ptr2, &mut top));
-                }
-            }
-        }
-        let mut i = 0;
-        // Visit all objects in current space then move them to new space if needed
-        loop {
-            unsafe {
-                let object: *mut InGC<dyn Collectable> = self.allocated[i].ptr;
-                assert!(!object.is_null());
-                for child in (*object).ptr.borrow().child().iter() {
-                    let child_ptr: *mut InGC<dyn Collectable> = child.get_ptr();
-                    if child_ptr.is_null() {
-                        panic!();
-                    }
-                    // If current space contains object then move it to new space
-                    if from_space.contains(std::mem::transmute_copy(&child_ptr)) {
-                        *(child_ptr as *mut *mut InGC<dyn Collectable>) = std::mem::transmute_copy(
-                            &self.copy(std::mem::transmute_copy(&child_ptr), &mut top),
-                        );
-                    }
-                }
-                i = i + 1;
-                let real_size = std::mem::size_of_val(&*object);
-                scan = scan.offset(real_size);
-            }
-        }*/
         self.alloc.reset(top, to_space.end);
 
         if self.stats {
@@ -350,7 +310,7 @@ impl CopyGC {
             // move pointer
             *top = top.offset(size);
             // set forward address if we will visit this object again
-            (*obj).fwd = addr;
+            (&mut(*obj).fwd as *mut Address).write(addr);
 
             addr
         }
@@ -366,10 +326,10 @@ impl CopyGC {
             };
 
             unsafe {
-                ((*val_.ptr).fwd) = Address::null();
-                ((*val_.ptr).ptr) = RefCell::new(val);
-                ((*val_.ptr).marked)  = false;
-                ((*val_.ptr).collected) = false;
+                (&mut(*val_.ptr).fwd as *mut Address).write(Address::null());
+                (&mut(*val_.ptr).ptr as *mut RefCell<T>).write(RefCell::new(val));
+                (&mut(*val_.ptr).marked as *mut bool).write( false);
+                (&mut(*val_.ptr).collected as *mut bool).write(false);
             }
             self.allocated.push(val_);
             return val_;
@@ -381,10 +341,10 @@ impl CopyGC {
             ptr: ptr.to_mut_ptr(),
         };
         unsafe {
-            ((*val_.ptr).ptr) = RefCell::new(val);
-            ((*val_.ptr).fwd) = Address::null();
-            ((*val_.ptr).marked)  = false;
-            ((*val_.ptr).collected) = false;
+            (&mut(*val_.ptr).fwd as *mut Address).write(Address::null());
+            (&mut(*val_.ptr).ptr as *mut RefCell<T>).write(RefCell::new(val));
+            (&mut(*val_.ptr).marked as *mut bool).write( false);
+            (&mut(*val_.ptr).collected as *mut bool).write(false);
         }
         self.allocated.push(val_);
         return val_;
@@ -429,6 +389,7 @@ impl<T: Collectable> Collectable for Vec<T> {
 
 impl<T: Collectable> Collectable for GCValue<T> {
     fn mark(&self) {
+        self.set_marked();
         self.borrow().mark();
     }
 }
