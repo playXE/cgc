@@ -438,11 +438,7 @@ pub fn gc_enable_stats() {
     //})
 }
 
-pub fn gc_allocated_size() -> usize {
-    //GC.with(|x| {
-    GC.lock().total_allocated()
-    //})
-}
+
 
 pub fn gc_add_root(obj: GCValue<dyn Collectable>) {
     GC.lock().add_root(obj);

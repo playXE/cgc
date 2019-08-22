@@ -1,11 +1,8 @@
 pub trait Collectable {
-    /// Get all children GC objects from `self`
-    fn child(&self) -> Vec<GCValue<dyn Collectable>> {
-        vec![]
-    }
-    #[doc(hidden)]
-    fn size(&self) -> usize {
-        0
+    /// Mark all GC values
+    fn mark(&self) {}
+    fn destructor(&mut self) {
+
     }
 }
 
@@ -31,6 +28,7 @@ for GCValue<T>
 }
 struct InGC<T: Collectable + ?Sized> {
     fwd: Address,
+    collected: bool,
     marked: bool,
     ptr: RefCell<T>,
     
@@ -42,10 +40,6 @@ unsafe impl<T: Collectable + ?Sized + Send> Send for GCValue<T> {}
 unsafe impl<T: Collectable + ?Sized + Sync> Sync for GCValue<T> {}
 
 impl<T: Collectable + ?Sized> InGC<T> {
-    fn size(&self) -> usize {
-        self.ptr.borrow().size()
-    }
-
     fn copy_to(&self, dest: Address, size: usize) {
         unsafe {
             std::ptr::copy_nonoverlapping(
@@ -63,10 +57,6 @@ pub struct GCValue<T: Collectable + ?Sized> {
 }
 
 impl<T: Collectable + ?Sized> GCValue<T> {
-    fn size(&self) -> usize {
-        unsafe { ((*self.ptr).ptr).borrow().size() }
-    }
-
     fn fwd(&self) -> Address {
         unsafe { (*self.ptr).fwd }
     }
@@ -74,6 +64,12 @@ impl<T: Collectable + ?Sized> GCValue<T> {
     unsafe fn get_ptr(&self) -> *mut InGC<T> {
         self.ptr
     }
+    pub fn collected(&self) -> bool {
+        unsafe {
+            (*self.ptr).collected
+        }
+    }
+
     /// Compare `self` pointer and `other` pointer
     /// ```rust
     /// use cgc::{gc_allocate,gc_collect_not_par};
@@ -157,13 +153,6 @@ impl CopyGC {
         }
     }
 
-    pub fn total_allocated(&self) -> usize {
-        let mut s = 0;
-        for allocated in self.allocated.iter() {
-            s += allocated.size();
-        }
-        s
-    }
     /// Get space from where we copy objects
     pub(crate) fn from_space(&self) -> Region {
         if self.alloc.limit() == self.separator {
@@ -216,7 +205,7 @@ impl CopyGC {
         let old_size = self.alloc.top().offset_from(from_space.start);
         let mut top = to_space.start;
         let mut scan = top;
-
+        let prev_count = self.allocated.len();
         for i in 0..self.roots.len() {
             let mut root = self.roots[i];
             let root_ptr: *mut InGC<dyn Collectable> = root.ptr;
@@ -225,10 +214,12 @@ impl CopyGC {
                 let ptr2 = unsafe { std::mem::transmute_copy(&root_ptr) };
                 unsafe {
                     (*root.ptr).marked = true;
+                    (*root.ptr).ptr.borrow().mark();
                     root.ptr = std::mem::transmute_copy(&self.copy(ptr2, &mut top));
-                    for child in (*root_ptr).ptr.borrow().child().iter() {
+                    
+                    /*for child in (*root_ptr).ptr.borrow().child().iter() {
                         (*child.ptr).marked = true;
-                    }
+                    }*/
                 }
             }
         }
@@ -244,8 +235,23 @@ impl CopyGC {
                 scan = scan.offset(real_size);
             }
         }
+        let mut retained_pointers = vec![];
+        self.allocated.retain(|x| {
+            retained_pointers.push(*x);
+            unsafe {
+                if !(*x.ptr).marked {
+                    (*x.ptr).collected = true;
+                    x.borrow_mut().destructor();
+                }
+            }
+            unsafe {(*x.ptr).marked}
+        });
+        for p in retained_pointers.iter() {
+            //println!("{:?}",p.ptr);
+            self.remove_root(*p);
+        }
 
-        for i in 0..self.allocated.len() {
+        /*for i in 0..self.allocated.len() {
             unsafe {
                 let mut remove_root = Option::None;
                 if let Some(obj) = self.allocated.get_mut(i) {
@@ -259,7 +265,7 @@ impl CopyGC {
                     self.remove_root(r);
                 }
             }
-        }
+        }*/
         for i in 0..self.allocated.len() {
             unsafe {
                 
@@ -325,7 +331,7 @@ impl CopyGC {
                 formatted_size(garbage),
                 garbage_ratio,
             );
-            //println!("Objects count before collection: {},after: {}",prev_count,self.allocated.len());
+           // println!("Objects count before collection: {},after: {}",prev_count,self.allocated.len());
         }
     }
 
@@ -345,9 +351,6 @@ impl CopyGC {
             *top = top.offset(size);
             // set forward address if we will visit this object again
             (*obj).fwd = addr;
-            if !(*obj).marked {
-                (*obj).marked = true;
-            }
 
             addr
         }
@@ -366,6 +369,7 @@ impl CopyGC {
                 ((*val_.ptr).fwd) = Address::null();
                 ((*val_.ptr).ptr) = RefCell::new(val);
                 ((*val_.ptr).marked)  = false;
+                ((*val_.ptr).collected) = false;
             }
             self.allocated.push(val_);
             return val_;
@@ -380,6 +384,7 @@ impl CopyGC {
             ((*val_.ptr).ptr) = RefCell::new(val);
             ((*val_.ptr).fwd) = Address::null();
             ((*val_.ptr).marked)  = false;
+            ((*val_.ptr).collected) = false;
         }
         self.allocated.push(val_);
         return val_;
@@ -392,26 +397,12 @@ impl Drop for CopyGC {
     }
 }
 
-impl Collectable for i64 {
-    fn child(&self) -> Vec<GCValue<dyn Collectable>> {
-        vec![]
-    }
 
-    fn size(&self) -> usize {
-        std::mem::size_of::<i64>()
-    }
-}
 
 macro_rules! collectable_for_simple_types {
     ($($t: tt),*) => {
       $(  impl Collectable for $t {
-            fn child(&self) -> Vec<GCValue<dyn Collectable>> {
-                vec![]
-            }
-
-            fn size(&self) -> usize {
-                std::mem::size_of::<$t>()
-            }
+            
         }
       )*
     };
@@ -419,31 +410,26 @@ macro_rules! collectable_for_simple_types {
 
 collectable_for_simple_types! {
     u8,u16,u32,u64,u128,
-    i8,i16,i32,i128,
+    i8,i16,i32,i128,i64,
     bool,String
 }
 
 impl<T: Collectable> Collectable for Vec<T> {
-    fn child(&self) -> Vec<GCValue<dyn Collectable>> {
-        let mut child = vec![];
+    fn mark(&self) {
+        
         for x in self.iter() {
-            child.extend(x.child().iter().cloned());
+            x.mark();
         }
-        child
     }
-
-    fn size(&self) -> usize {
-        std::mem::size_of::<Self>()
+    fn destructor(&mut self) {
+        println!("vec dtor");
     }
+    
 }
 
 impl<T: Collectable> Collectable for GCValue<T> {
-    fn child(&self) -> Vec<GCValue<dyn Collectable>> {
-        self.borrow().child()
-    }
-
-    fn size(&self) -> usize {
-        self.borrow().size()
+    fn mark(&self) {
+        self.borrow().mark();
     }
 }
 
