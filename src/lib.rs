@@ -237,10 +237,6 @@ impl GarbageCollector {
                 *item.ptr.borrow_mut() = std::mem::transmute_copy(&new_addr);
             }
         }*/
-
-        while let Some(item) = self.grey.pop() {
-            unsafe { (**item.ptr.borrow_mut()).fwd = Address::null() };
-        }
         self.alloc.reset(top, to_space.end);
 
         if self.verbose {
