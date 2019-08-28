@@ -1,14 +1,10 @@
 [package]
-name = "cgc"
-version = "0.2.5"
-authors = ["Adel Prokurov <adel.prokurov@protonmail.com>"]
+name = "gc-rs"
+version = "0.1.0"
+authors = ["gtash"]
 edition = "2018"
-description = "Copying garbage collector"
-repository = "https://github.com/playXE/cgc"
-readme = "README.md"
-keywords = ["gc","garbage-collector"]
-license = "MIT"
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 libc = "0.2"

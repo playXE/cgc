@@ -1,445 +1,352 @@
 #![feature(coerce_unsized)]
 #![feature(unsize)]
 
-pub mod bump;
-pub mod copying;
-pub mod generational;
+pub(crate) mod bump;
+use bump::BumpAllocator;
+pub(crate) mod internal;
+pub(crate) use internal::*;
+
+/// Trait that you must need to implement for objects that you want GC.
+pub trait Trace {
+    /// Trace all GC references in current object.
+    /// ```rust
+    /// impl Trace for MyObject {
+    ///     fn trace(&self) {
+    ///         let item1: &GC<dyn Trace> = &self.field;
+    ///         item1.mark();
+    ///     }
+    /// }
+    /// ```
+    fn trace(&self) {}
+}
+
+use std::marker::Unsize;
+use std::ops::CoerceUnsized;
+
+impl<T: Trace + ?Sized + Unsize<U>, U: Trace + ?Sized> CoerceUnsized<GC<U>> for GC<T> {}
+
+use std::cell::RefCell;
+
+struct InGC<T: Trace + ?Sized> {
+    fwd: Address,
+    mark: bool,
+    ptr: RefCell<T>,
+}
+
+impl<T: Trace + ?Sized> InGC<T> {
+    fn copy_to(&mut self, to: Address) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self as *const _ as *const u8,
+                to.to_mut_ptr(),
+                std::mem::size_of_val(self),
+            );
+        }
+    }
+}
+
+pub struct GC<T: Trace + ?Sized> {
+    ptr: RefCell<*mut InGC<T>>,
+}
+
+impl<T: Trace + ?Sized> GC<T> {
+    /// Get shared reference to object
+    ///
+    /// Function will panic if object already mutable borrowed
+    pub fn borrow(&self) -> std::cell::Ref<'_, T> {
+        unsafe { (*(*self.ptr.borrow())).ptr.borrow() }
+    }
+
+    /// Get mutable reference to object
+    ///
+    /// Function will panic if object already mutable borrowed
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, T> {
+        unsafe { (*(*self.ptr.borrow())).ptr.borrow_mut() }
+    }
+    /// Compare two pointers
+    pub fn ref_eq(&self, other: &GC<T>) -> bool {
+        *self.ptr.borrow() == *other.ptr.borrow()
+    }
+    /// Mark current object
+    pub fn mark(&self) {
+        let mut ptr = unsafe { &mut **self.ptr.borrow() };
+        ptr.mark = true;
+        self.borrow().trace();
+    }
+}
+impl<T: Trace + ?Sized> Clone for GC<T> {
+    fn clone(&self) -> Self {
+        Self {
+            ptr: self.ptr.clone(),
+        }
+    }
+}
 
 pub const K: usize = 1024;
 pub const M: usize = K * K;
-use std::cmp::{Ord, Ordering, PartialOrd};
+
+pub struct GarbageCollector {
+    total: Region,
+    separator: Address,
+    pub verbose: bool,
+    alloc: BumpAllocator,
+    allocated: Vec<GC<dyn Trace>>,
+    roots: Vec<GC<dyn Trace>>,
+}
+
+fn align_usize(value: usize, align: usize) -> usize {
+    if align == 0 {
+        return value;
+    }
+
+    ((value + align - 1) / align) * align
+}
+
+impl GarbageCollector {
+    pub fn new(heap_size: Option<usize>) -> GarbageCollector {
+        let alignment = 2 * page_size() as usize;
+        let heap_size = align_usize(heap_size.unwrap_or(M * 128), alignment);
+        let ptr = mmap(heap_size, ProtType::Writable);
+        let heap_start = Address::from_ptr(ptr);
+        let heap = heap_start.region_start(heap_size);
+
+        let semi_size = heap_size / 2;
+        let separator = heap_start.offset(semi_size);
+        GarbageCollector {
+            total: heap,
+            separator,
+            roots: vec![],
+            verbose: false,
+            allocated: vec![],
+            alloc: BumpAllocator::new(heap_start, separator),
+        }
+    }
+    /// Remove object from rootset
+    pub fn remove_root(&mut self, val: GC<dyn Trace>) {
+        for i in 0..self.roots.len() {
+            if self.roots[i].ref_eq(&val) {
+                self.roots.remove(i);
+                break;
+            }
+        }
+    }
+    /// Add root object to rootset
+    ///
+    /// What is a root object?
+    /// - Static or global variables
+    /// - Some object that may own some other objects
+    ///
+    pub fn add_root(&mut self, val: GC<dyn Trace>) {
+        for root in self.roots.iter() {
+            if root.ref_eq(&val) {
+                return;
+            }
+        }
+
+        self.roots.push(val);
+    }
+
+    pub(crate) fn from_space(&self) -> Region {
+        if self.alloc.limit() == self.separator {
+            Region::new(self.total.start, self.separator)
+        } else {
+            Region::new(self.separator, self.total.end)
+        }
+    }
+    /// Get space where we need copy objects
+    pub(crate) fn to_space(&self) -> Region {
+        if self.alloc.limit() == self.separator {
+            Region::new(self.separator, self.total.end)
+        } else {
+            Region::new(self.total.start, self.separator)
+        }
+    }
+    /// Allocate value in GC space.
+    pub fn allocate<T: Trace + Sized + 'static>(&mut self, val: T) -> GC<T> {
+        let mem: *mut InGC<T> =
+            unsafe { std::mem::transmute(self.alloc.bump_alloc(std::mem::size_of::<InGC<T>>())) };
+        if !mem.is_null() {
+            unsafe {
+                mem.write(InGC {
+                    fwd: Address::null(),
+                    ptr: RefCell::new(val),
+                    mark: false,
+                });
+            }
+
+            let cell = GC {
+                ptr: RefCell::new(mem),
+            };
+            self.allocated.push(cell.clone());
+            return cell;
+        } else {
+            self.collect();
+            let mem: *mut InGC<T> = unsafe {
+                std::mem::transmute(self.alloc.bump_alloc(std::mem::size_of::<InGC<T>>()))
+            };
+            unsafe {
+                mem.write(InGC {
+                    fwd: Address::null(),
+                    ptr: RefCell::new(val),
+                    mark: false,
+                });
+            }
+
+            let cell = GC {
+                ptr: RefCell::new(mem),
+            };
+            self.allocated.push(cell.clone());
+            return cell;
+        }
+    }
+    /// Collect garbage
+    pub fn collect(&mut self) {
+        let start_time = time::PreciseTime::now();
+        let to_space = self.to_space();
+        let from_space = self.from_space();
+        let mut top = to_space.start;
+        let mut dead = 0;
+        let old_size = self.alloc.top().offset_from(from_space.start);
+        for i in 0..self.roots.len() {
+            let root = self.roots[i].clone();
+            root.mark();
+        }
+
+        self.allocated.retain(|x: &GC<dyn Trace>| {
+            let mark = unsafe { (**x.ptr.borrow()).mark };
+            if mark == false {
+                dead += 1;
+            }
+            mark
+        });
+
+        let live = self.allocated.len();
+
+        for i in 0..self.allocated.len() {
+            let x = self.allocated[i].clone();
+            unsafe { &mut **x.ptr.borrow_mut() }.mark = false;
+            unsafe { &mut **x.ptr.borrow_mut() }.fwd = Address::null();
+            let new_addr = self.copy(*x.ptr.borrow(), &mut top);
+            *x.ptr.borrow_mut() = unsafe { std::mem::transmute_copy(&new_addr) };
+        }
+
+        /*for i in 0..self.grey.len() {
+            unsafe {
+                let item = self.grey[i].clone();
+                let new_addr = self.copy(*item.ptr.borrow(), &mut top);
+                *item.ptr.borrow_mut() = std::mem::transmute_copy(&new_addr);
+            }
+        }*/
+
+        while let Some(item) = self.grey.pop() {
+            unsafe { (**item.ptr.borrow_mut()).fwd = Address::null() };
+        }
+        self.alloc.reset(top, to_space.end);
+
+        if self.verbose {
+            let end = time::PreciseTime::now();
+            let new_size = top.offset_from(to_space.start);
+            let garbage = old_size.wrapping_sub(new_size);
+            let garbage_ratio = if old_size == 0 {
+                0f64
+            } else {
+                (garbage as f64 / old_size as f64) * 100f64
+            };
+            println!(
+                "GC: {:.1} ms ({:.1} ns ), {}->{} size, {}/{:.0}% garbage ({} dead,{} live)",
+                start_time.to(end).num_milliseconds(),
+                start_time.to(end).num_nanoseconds().unwrap_or(0),
+                formatted_size(old_size),
+                formatted_size(new_size),
+                formatted_size(garbage),
+                garbage_ratio,
+                dead,
+                live
+            );
+        }
+    }
+
+    fn copy(&mut self, obj: *mut InGC<dyn Trace>, to: &mut Address) -> Address {
+        unsafe {
+            if (*obj).fwd != Address::null() {
+                return (*obj).fwd;
+            }
+            let addr = *to;
+            (*obj).copy_to(addr);
+
+            *to = to.offset(std::mem::size_of_val(&*obj));
+            (&mut (*obj).fwd as *mut Address).write(addr);
+            return addr;
+        };
+    }
+}
+
+impl Drop for GarbageCollector {
+    fn drop(&mut self) {
+        munmap(self.total.start.to_ptr(), self.total.size());
+    }
+}
+
+macro_rules! collectable_for_simple_types {
+    ($($t: tt),*) => {
+      $(  impl Trace for $t {
+            fn trace(&self) {}
+        }
+      )*
+    };
+}
+
+collectable_for_simple_types! {
+    u8,u16,u32,u64,u128,
+    i8,i16,i32,i128,i64,
+    bool,String
+}
+
+impl<T: Trace> Trace for Vec<T> {
+    fn trace(&self) {
+        self.iter().for_each(|x| x.trace());
+    }
+}
+
+impl<T: Trace> Trace for GC<T> {
+    fn trace(&self) {
+        self.mark();
+    }
+}
+
 use std::fmt;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate)struct Address(usize);
-
-impl Address {
-    #[inline(always)]
-    pub fn from(val: usize) -> Address {
-        Address(val)
-    }
-
-    #[inline(always)]
-    pub fn region_start(self, size: usize) -> Region {
-        Region::new(self, self.offset(size))
-    }
-
-    #[inline(always)]
-    pub fn offset_from(self, base: Address) -> usize {
-        debug_assert!(self >= base);
-
-        self.to_usize() - base.to_usize()
-    }
-
-    #[inline(always)]
-    pub fn offset(self, offset: usize) -> Address {
-        Address(self.0 + offset)
-    }
-
-    #[inline(always)]
-    pub fn sub(self, offset: usize) -> Address {
-        Address(self.0 - offset)
-    }
-
-    #[inline(always)]
-    pub fn add_ptr(self, words: usize) -> Address {
-        Address(self.0 + words * std::mem::size_of::<usize>())
-    }
-
-    #[inline(always)]
-    pub fn sub_ptr(self, words: usize) -> Address {
-        Address(self.0 - words * std::mem::size_of::<usize>())
-    }
-
-    #[inline(always)]
-    pub fn to_usize(self) -> usize {
-        self.0
-    }
-
-    #[inline(always)]
-    pub fn from_ptr<T>(ptr: *const T) -> Address {
-        Address(ptr as usize)
-    }
-
-    #[inline(always)]
-    pub fn to_ptr<T>(&self) -> *const T {
-        self.0 as *const T
-    }
-
-    #[inline(always)]
-    pub fn to_mut_ptr<T>(&self) -> *mut T {
-        self.0 as *const T as *mut T
-    }
-
-    #[inline(always)]
-    pub fn null() -> Address {
-        Address(0)
-    }
-
-    #[inline(always)]
-    pub fn is_null(self) -> bool {
-        self.0 == 0
-    }
-
-    #[inline(always)]
-    pub fn is_non_null(self) -> bool {
-        self.0 != 0
+impl<T: fmt::Debug + Trace> fmt::Debug for GC<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.borrow())
     }
 }
 
-impl fmt::Display for Address {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "0x{:x}", self.to_usize())
+impl<T: Trace + Eq> Eq for GC<T> {}
+
+impl<T: Trace + PartialEq> PartialEq for GC<T> {
+    fn eq(&self, other: &Self) -> bool {
+        *self.borrow() == *other.borrow()
     }
 }
 
-impl fmt::Debug for Address {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "0x{:x}", self.to_usize())
+use std::cmp::{Ord, Ordering, PartialOrd};
+
+impl<T: Trace + PartialOrd> PartialOrd for GC<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.borrow().partial_cmp(&other.borrow())
     }
 }
 
-impl PartialOrd for Address {
-    fn partial_cmp(&self, other: &Address) -> Option<Ordering> {
-        Some(self.cmp(other))
+impl<T: Trace + Ord + Eq> Ord for GC<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.borrow().cmp(&other.borrow())
     }
 }
 
-impl Ord for Address {
-    fn cmp(&self, other: &Address) -> Ordering {
-        self.to_usize().cmp(&other.to_usize())
+use std::hash::{Hash, Hasher};
+impl<T: Hash + Trace> Hash for GC<T> {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        self.borrow().hash(h);
     }
-}
-
-impl From<usize> for Address {
-    fn from(val: usize) -> Address {
-        Address(val)
-    }
-}
-
-#[derive(Copy, Clone)]
-pub(crate) struct Region {
-    pub start: Address,
-    pub end: Address,
-}
-
-impl Region {
-    pub fn new(start: Address, end: Address) -> Region {
-        debug_assert!(start <= end);
-
-        Region {
-            start: start,
-            end: end,
-        }
-    }
-
-    #[inline(always)]
-    pub fn contains(&self, addr: Address) -> bool {
-        self.start <= addr && addr < self.end
-    }
-
-    #[inline(always)]
-    pub fn valid_top(&self, addr: Address) -> bool {
-        self.start <= addr && addr <= self.end
-    }
-
-    #[inline(always)]
-    pub fn size(&self) -> usize {
-        self.end.to_usize() - self.start.to_usize()
-    }
-
-    #[inline(always)]
-    pub fn empty(&self) -> bool {
-        self.start == self.end
-    }
-
-    #[inline(always)]
-    pub fn disjunct(&self, other: &Region) -> bool {
-        self.end <= other.start || self.start >= other.end
-    }
-
-    #[inline(always)]
-    pub fn overlaps(&self, other: &Region) -> bool {
-        !self.disjunct(other)
-    }
-
-    #[inline(always)]
-    pub fn fully_contains(&self, other: &Region) -> bool {
-        self.contains(other.start) && self.valid_top(other.end)
-    }
-}
-
-impl Default for Region {
-    fn default() -> Region {
-        Region {
-            start: Address::null(),
-            end: Address::null(),
-        }
-    }
-}
-
-impl fmt::Display for Region {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}-{}", self.start, self.end)
-    }
-}
-
-pub(crate)struct FormattedSize {
-    size: usize,
-}
-
-impl fmt::Display for FormattedSize {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let ksize = (self.size as f64) / 1024f64;
-
-        if ksize < 1f64 {
-            return write!(f, "{}B", self.size);
-        }
-
-        let msize = ksize / 1024f64;
-
-        if msize < 1f64 {
-            return write!(f, "{:.1}K", ksize);
-        }
-
-        let gsize = msize / 1024f64;
-
-        if gsize < 1f64 {
-            write!(f, "{:.1}M", msize)
-        } else {
-            write!(f, "{:.1}G", gsize)
-        }
-    }
-}
-
-pub(crate) fn formatted_size(size: usize) -> FormattedSize {
-    FormattedSize { size }
-}
-
-pub(crate) use self::ProtType::*;
-
-#[cfg(not(target_family = "windows"))]
-use libc;
-
-use std::ptr;
-
-static mut PAGE_SIZE: u32 = 0;
-static mut PAGE_SIZE_BITS: u32 = 0;
-
-pub(crate) fn init_page_size() {
-    unsafe {
-        PAGE_SIZE = determine_page_size();
-        assert!((PAGE_SIZE & (PAGE_SIZE - 1)) == 0);
-
-        PAGE_SIZE_BITS = log2(PAGE_SIZE);
-    }
-}
-
-#[cfg(target_family = "unix")]
-pub(crate) fn determine_page_size() -> u32 {
-    let val = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-
-    if val <= 0 {
-        panic!("could not determine page size.");
-    }
-
-    val as u32
-}
-
-#[cfg(target_family = "windows")]
-pub(crate) fn determine_page_size() -> u32 {
-    use std::mem;
-    use winapi::um::sysinfoapi::{GetSystemInfo, SYSTEM_INFO};
-
-    unsafe {
-        let mut system_info: SYSTEM_INFO = mem::uninitialized();
-        GetSystemInfo(&mut system_info);
-
-        system_info.dwPageSize
-    }
-}
-
-/// determine log_2 of given value
-fn log2(mut val: u32) -> u32 {
-    let mut log = 0;
-
-    if (val & 0xFFFF0000) != 0 {
-        val >>= 16;
-        log += 16;
-    }
-    if val >= 256 {
-        val >>= 8;
-        log += 8;
-    }
-    if val >= 16 {
-        val >>= 4;
-        log += 4;
-    }
-    if val >= 4 {
-        val >>= 2;
-        log += 2;
-    }
-
-    log + (val >> 1)
-}
-
-#[test]
-fn test_log2() {
-    for i in 0..32 {
-        assert_eq!(i, log2(1 << i));
-    }
-}
-
-pub(crate) fn page_size() -> u32 {
-    unsafe { PAGE_SIZE }
-}
-
-pub(crate) fn page_size_bits() -> u32 {
-    unsafe { PAGE_SIZE_BITS }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum ProtType {
-    None,
-    Executable,
-    Writable,
-}
-
-impl ProtType {
-    #[cfg(target_family = "unix")]
-    fn to_libc(self) -> libc::c_int {
-        match self {
-            ProtType::None => 0,
-            ProtType::Writable => libc::PROT_READ | libc::PROT_WRITE,
-            ProtType::Executable => libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
-        }
-    }
-}
-
-#[cfg(target_family = "unix")]
-pub(crate) fn mmap(size: usize, prot: ProtType) -> *const u8 {
-    let ptr = unsafe {
-        libc::mmap(
-            ptr::null_mut(),
-            size,
-            prot.to_libc(),
-            libc::MAP_PRIVATE | libc::MAP_ANON,
-            -1,
-            0,
-        ) as *mut libc::c_void
-    };
-
-    if ptr == libc::MAP_FAILED {
-        panic!("mmap failed");
-    }
-
-    ptr as *const u8
-}
-
-#[cfg(target_family = "windows")]
-pub(crate) fn mmap(size: usize, exec: ProtType) -> *const u8 {
-    use winapi::um::memoryapi::VirtualAlloc;
-    use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, PAGE_READWRITE};
-
-    let prot = if exec == Executable {
-        PAGE_EXECUTE_READWRITE
-    } else {
-        PAGE_READWRITE
-    };
-
-    let ptr = unsafe { VirtualAlloc(ptr::null_mut(), size, MEM_COMMIT | MEM_RESERVE, prot) };
-
-    if ptr.is_null() {
-        use winapi::um::errhandlingapi::GetLastError;
-        panic!(
-            "VirtualAlloc failed with error code '{:x}',size '{}'",
-            unsafe { GetLastError() },
-            size
-        );
-    }
-
-    ptr as *const u8
-}
-
-#[cfg(target_family = "unix")]
-pub(crate) fn munmap(ptr: *const u8, size: usize) {
-    let res = unsafe { libc::munmap(ptr as *mut libc::c_void, size) };
-
-    if res != 0 {
-        panic!("munmap failed");
-    }
-}
-
-#[cfg(target_family = "windows")]
-pub(crate) fn munmap(ptr: *const u8, _size: usize) {
-    use winapi::um::memoryapi::VirtualFree;
-    use winapi::um::winnt::MEM_RELEASE;
-
-    let res = unsafe { VirtualFree(ptr as *mut _, 0, MEM_RELEASE) };
-
-    if res == 0 {
-        panic!("VirtualFree failed");
-    }
-}
-
-#[cfg(target_family = "unix")]
-pub(crate) fn mprotect(ptr: *const u8, size: usize, prot: ProtType) {
-    debug_assert!(mem::is_page_aligned(ptr as usize));
-    debug_assert!(mem::is_page_aligned(size));
-
-    let res = unsafe { libc::mprotect(ptr as *mut libc::c_void, size, prot.to_libc()) };
-
-    if res != 0 {
-        panic!("mprotect() failed");
-    }
-}
-
-pub use copying::*;
-
-unsafe impl Send for CopyGC {}
-unsafe impl Sync for CopyGC {}
-
-use parking_lot::Mutex;
-
-lazy_static::lazy_static!(
-    pub static ref GC: Mutex<CopyGC> = Mutex::new(CopyGC::new(Option::None));
-);
-
-pub fn gc_collect() {
-    std::thread::spawn(|| {
-        GC.lock().collect();
-    });
-}
-
-pub fn gc_collect_not_par() {
-    GC.lock().collect();
-}
-
-pub fn gc_allocate_sync<T: Collectable + Sized + 'static + Send>(val: T) -> GCValue<T> {
-    std::thread::spawn(move || GC.lock().allocate(val))
-        .join()
-        .unwrap()
-}
-
-pub fn gc_allocate<T: Collectable + Sized + 'static>(val: T) -> GCValue<T> {
-    //GC.with(|x| {
-    GC.lock().allocate(val)
-}
-
-pub fn gc_rmroot(val: GCValue<dyn Collectable>) {
-    GC.lock().remove_root(val);
-}
-
-pub fn gc_enable_stats() {
-    //GC.with(|x| {
-    let mut lock = GC.lock();
-    lock.stats = !lock.stats;
-    drop(lock);
-    //})
-}
-
-
-
-pub fn gc_add_root(obj: GCValue<dyn Collectable>) {
-    GC.lock().add_root(obj);
 }

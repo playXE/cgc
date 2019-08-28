@@ -1,16 +1,19 @@
-use cgc::*;
+extern crate gc_rs;
 
-use std::collections::HashMap;
+use gc_rs::*;
 
 fn main() {
-    let s = gc_allocate(vec![gc_allocate(1)]);
-    gc_add_root(s);
-    gc_enable_stats();
-    println!("{:?}",s);
-    s.borrow_mut().pop();
-    gc_collect_not_par();
-    gc_collect_not_par();
-    println!("{}",s.collected());
-    gc_collect_not_par();
-    println!("{}",s.collected());
+    let mut gc = GarbageCollector::new(None);
+    gc.verbose = true;
+    let v: GC<Vec<GC<String>>> = gc.allocate(vec![]);
+
+    gc.add_root(v.clone());
+    gc.collect();
+    v.borrow_mut().push(gc.allocate("Hello!".to_owned()));
+    v.borrow_mut().push(gc.allocate("Hello!".to_owned()));
+    v.borrow_mut().push(gc.allocate("Hello!".to_owned()));
+    v.borrow_mut().push(gc.allocate("Hello!".to_owned()));
+    gc.collect();
+    v.borrow_mut().clear();
+    gc.collect();
 }
