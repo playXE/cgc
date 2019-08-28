@@ -1,6 +1,6 @@
-extern crate gc_rs;
+extern crate cgc;
 
-use gc_rs::*;
+use cgc::*;
 
 fn main() {
     let mut gc = GarbageCollector::new(None);
