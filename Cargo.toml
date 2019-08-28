@@ -1,6 +1,6 @@
 [package]
 name = "cgc"
-version = "0.2.1"
+version = "0.2.6"
 authors = ["gtash"]
 edition = "2018"
 description = "Copying garbage collector"
