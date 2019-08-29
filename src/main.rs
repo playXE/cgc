@@ -13,6 +13,8 @@ fn main() {
     v.borrow_mut().push(gc.allocate("Hello!".to_owned()));
     v.borrow_mut().push(gc.allocate("Hello!".to_owned()));
     v.borrow_mut().push(gc.allocate("Hello!".to_owned()));
+    v.borrow_mut().push(gc.allocate("Hello!".to_owned()));
+    v.borrow_mut().push(gc.allocate("Hello!".to_owned()));
     gc.collect();
     v.borrow_mut().clear();
     gc.collect();

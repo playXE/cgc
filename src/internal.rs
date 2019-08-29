@@ -223,8 +223,6 @@ pub(crate) fn init_page_size() {
     unsafe {
         PAGE_SIZE = determine_page_size();
         assert!((PAGE_SIZE & (PAGE_SIZE - 1)) == 0);
-
-        PAGE_SIZE_BITS = log2(PAGE_SIZE);
     }
 }
 
@@ -240,6 +238,7 @@ pub(crate) fn determine_page_size() -> u32 {
 }
 
 #[cfg(target_family = "windows")]
+#[allow(deprecated)]
 pub(crate) fn determine_page_size() -> u32 {
     use std::mem;
     use winapi::um::sysinfoapi::{GetSystemInfo, SYSTEM_INFO};
@@ -252,48 +251,12 @@ pub(crate) fn determine_page_size() -> u32 {
     }
 }
 
-/// determine log_2 of given value
-fn log2(mut val: u32) -> u32 {
-    let mut log = 0;
-
-    if (val & 0xFFFF0000) != 0 {
-        val >>= 16;
-        log += 16;
-    }
-    if val >= 256 {
-        val >>= 8;
-        log += 8;
-    }
-    if val >= 16 {
-        val >>= 4;
-        log += 4;
-    }
-    if val >= 4 {
-        val >>= 2;
-        log += 2;
-    }
-
-    log + (val >> 1)
-}
-
-#[test]
-fn test_log2() {
-    for i in 0..32 {
-        assert_eq!(i, log2(1 << i));
-    }
-}
-
 pub(crate) fn page_size() -> u32 {
     unsafe { PAGE_SIZE }
 }
 
-pub(crate) fn page_size_bits() -> u32 {
-    unsafe { PAGE_SIZE_BITS }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ProtType {
-    None,
     Executable,
     Writable,
 }

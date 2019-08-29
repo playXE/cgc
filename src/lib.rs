@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 #![feature(coerce_unsized)]
 #![feature(unsize)]
 
@@ -5,6 +6,7 @@ pub(crate) mod bump;
 use bump::BumpAllocator;
 pub(crate) mod internal;
 pub(crate) use internal::*;
+pub mod impl_;
 
 /// Trait that you must need to implement for objects that you want GC.
 pub trait Trace {
