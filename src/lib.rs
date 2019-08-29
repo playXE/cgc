@@ -35,6 +35,11 @@ struct InGC<T: Trace + ?Sized> {
     ptr: RefCell<T>,
 }
 
+unsafe impl<T: Trace + Send> Send for InGC<T> {}
+unsafe impl<T: Trace + Sync> Sync for InGC<T> {}
+unsafe impl<T: Trace + Send> Send for GC<T> {}
+unsafe impl<T: Trace + Sync> Sync for GC<T> {}
+
 impl<T: Trace + ?Sized> InGC<T> {
     fn copy_to(&mut self, to: Address) {
         unsafe {
@@ -86,6 +91,9 @@ impl<T: Trace + ?Sized> Clone for GC<T> {
 
 pub const K: usize = 1024;
 pub const M: usize = K * K;
+
+unsafe impl Sync for GarbageCollector {}
+unsafe impl Send for GarbageCollector {}
 
 pub struct GarbageCollector {
     total: Region,
