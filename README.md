@@ -7,4 +7,5 @@ cgc is a compacting garbage collector
 # Disadvantages
 - You need define `Traceable` trait for every type that you want to GC.
 
-
+# TODO
+- Thread safe
