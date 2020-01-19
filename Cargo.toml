@@ -1,22 +1,20 @@
 [package]
 name = "cgc"
-version = "0.2.6"
-authors = ["gtash"]
+version = "0.3.0"
+authors = ["Adel prokurov <adel.prokurov@protonmail.com>"]
 edition = "2018"
-description = "Copying garbage collector"
+description = "Compacting garbage collector"
 repository = "https://github.com/playXE/cgc"
 readme = "README.md"
 keywords = ["gc","garbage-collector"]
 license = "MIT"
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libc = "0.2"
-parking_lot = "0.9"
-lazy_static = "1.3"
-time = "0.1"
-hashlink = "*"
+parking_lot = "0.10"
+lazy_static = "1"
 
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winuser","memoryapi","errhandlingapi"] }
-kernel32-sys = "0.2"
+[target.'cfg(target_family = "windows")'.dependencies]
+winapi = "0.3.8"
+
+[target.'cfg(target_family = "unix")'.dependencies]
+libc = "0.2.66"

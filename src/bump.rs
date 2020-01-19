@@ -1,37 +1,37 @@
-use super::Address;
+use crate::mem::Address;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub(crate) struct BumpAllocator {
+pub struct BumpAllocator {
     top: AtomicUsize,
     limit: AtomicUsize,
 }
 
 impl BumpAllocator {
-    pub(crate) fn new(top: Address, limit: Address) -> BumpAllocator {
+    pub fn new(top: Address, limit: Address) -> BumpAllocator {
         BumpAllocator {
             top: AtomicUsize::new(top.to_usize()),
             limit: AtomicUsize::new(limit.to_usize()),
         }
     }
 
-    pub(crate) fn reset(&self, top: Address, limit: Address) {
+    pub fn reset(&self, top: Address, limit: Address) {
         self.top.store(top.to_usize(), Ordering::Relaxed);
         self.limit.store(limit.to_usize(), Ordering::Relaxed);
     }
 
-    pub(crate) fn reset_limit(&self, limit: Address) {
+    pub fn reset_limit(&self, limit: Address) {
         self.limit.store(limit.to_usize(), Ordering::Relaxed);
     }
 
-    pub(crate) fn top(&self) -> Address {
+    pub fn top(&self) -> Address {
         self.top.load(Ordering::Relaxed).into()
     }
 
-    pub(crate) fn limit(&self) -> Address {
+    pub fn limit(&self) -> Address {
         self.limit.load(Ordering::Relaxed).into()
     }
 
-    pub(crate) fn bump_alloc(&self, size: usize) -> Address {
+    pub fn bump_alloc(&self, size: usize) -> Address {
         let mut old = self.top.load(Ordering::Relaxed);
         let mut new;
 
