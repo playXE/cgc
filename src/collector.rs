@@ -34,7 +34,7 @@ impl GlobalCollector {
             roots: vec![],
             memory_heap: heap,
             alloc: crate::bump::BumpAllocator::new(heap.start, heap.end),
-            sweep_alloc: SweepAllocator::new(memory_heap),
+            sweep_alloc: SweepAllocator::new(heap),
             //stats: parking_lot::Mutex::new(CollectionStats::new()),
         }
     }
@@ -208,8 +208,8 @@ pub struct MarkCompact<'a> {
 impl<'a> MarkCompact<'a> {
     pub fn collect(&mut self) -> (Vec<RootHandle>, Vec<GcHandle<dyn Trace>>) {
         self.mark_live();
-        self.compute_forward();
-        self.relocate()
+        let new_heap = self.compute_forward();
+        (self.relocate(), new_heap)
     }
 
     pub fn mark_live(&mut self) {
@@ -226,7 +226,8 @@ impl<'a> MarkCompact<'a> {
         }
     }
 
-    pub fn compute_forward(&mut self) {
+    pub fn compute_forward(&mut self) -> Vec<GcHandle<dyn Trace>> {
+        let mut new_heap = vec![];
         for value in self.heap_objects.iter() {
             let value: *mut InnerPtr<dyn Trace> = value.0;
 
@@ -234,16 +235,17 @@ impl<'a> MarkCompact<'a> {
                 if (*value).mark.load(Ordering::Relaxed) {
                     let fwd = self.allocate(std::mem::size_of_val(&*value));
                     (*value).fwd = fwd;
+                    new_heap.push(GcHandle(value));
                 } else {
                     (*value).value.finalize();
                 }
             }
         }
+        new_heap
     }
 
-    pub fn relocate(&mut self) -> (Vec<RootHandle>, Vec<GcHandle<dyn Trace>>) {
+    pub fn relocate(&mut self) -> Vec<RootHandle> {
         let mut new_rootset = vec![];
-        let mut new_heap = vec![];
 
         for root in self.rootset.iter() {
             let root: Ptr<dyn RootedTrait> = Ptr(root.0);
@@ -259,7 +261,6 @@ impl<'a> MarkCompact<'a> {
                     unsafe {
                         *slot = fwd.to_mut_ptr::<u8>();
                     }
-                    new_heap.push(GcHandle(field.inner()));
                 }
 
                 let slot = root.get().slot().to_mut_ptr::<*mut u8>();
@@ -270,12 +271,11 @@ impl<'a> MarkCompact<'a> {
                 unsafe {
                     *slot = fwd.to_mut_ptr::<u8>();
                 };
-                new_heap.push(GcHandle(root.get().inner()));
                 new_rootset.push(RootHandle(root.0));
             }
         }
 
-        (new_rootset, new_heap)
+        new_rootset
     }
 
     fn allocate(&mut self, object_size: usize) -> Address {
