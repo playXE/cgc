@@ -16,6 +16,18 @@ impl<T: Trace + ?Sized> Drop for Rooted<T> {
         }
     }
 }
+/*
+impl<T: Trace + Sized + 'static> Traceable for Heap<T> {
+    fn trace_with<'a>(&'a mut self, mut f: impl FnMut(&'a mut dyn HeapTrait)) {
+        f(self);
+    }
+}
+
+impl<T: Trace> Finalizer for Heap<T> {
+    fn finalize(&mut self) {
+        self.get_mut().finalize();
+    }
+}*/
 
 impl<T: Trace + ?Sized> Rooted<T> {
     /// Returns reference to rooted value
@@ -173,6 +185,22 @@ impl<T: Trace + ?Sized> Heap<T> {
             debug_assert!(!self.inner.is_null());
             let inner = &*self.inner;
             &inner.value
+        }
+    }
+
+    /// Returns mutable reference to rooted value
+    ///
+    /// # Safety
+    /// Rust semantics doesn't allow two mutable references at the same time and this function is safe as long as you have only one mutable reference.
+    ///
+    /// If you want to be 100% sure that you don't have two or more mutable references at the same time please use `Rooted<RefCell<T>>`
+    ///
+    ///
+    pub fn get_mut(&mut self) -> &mut T {
+        unsafe {
+            let inner = &mut *self.inner;
+
+            &mut inner.value
         }
     }
 }

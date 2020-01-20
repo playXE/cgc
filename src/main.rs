@@ -25,20 +25,31 @@ impl Finalizer for Foo {
 }
 
 fn main() {
-    let mut gc = GlobalCollector::new(1024 * 1024 * 2); // 256 kb heap
-    {
-        let _v = gc.alloc(vec![12, 3]);
-        let _y = gc.alloc(Foo { x: 4, next: None });
+    let n = time::Instant::now();
+    let mut gc = GlobalCollector::new(1024 * 1024 * 100);
+    for _ in 0..1000000 {
+        gc.alloc(42usize);
     }
-    let x = gc.alloc(Foo { x: 3, next: None });
-    gc.collect();
-    let z = gc.alloc(Foo {
-        x: 5,
-        next: Some(Heap::from(&x)),
-    });
 
-    println!("{}", x.get().x);
+    gc.compact();
 
-    gc.collect();
-    println!("{}", z.get().x);
+    println!("{}", n.elapsed().whole_milliseconds());
 }
+
+/*
+fn main() {
+    let mut data = Vec::with_capacity(1000000);
+    let n = time::Instant::now();
+    for _ in 0..1000000 {
+        data.push(unsafe { std::alloc::alloc(std::alloc::Layout::new::<usize>()) });
+    }
+
+    for x in data.iter() {
+        unsafe {
+            std::alloc::dealloc(*x, std::alloc::Layout::new::<usize>());
+        }
+    }
+
+    println!("{}", n.elapsed().whole_milliseconds());
+}
+*/
