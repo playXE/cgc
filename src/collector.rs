@@ -2,11 +2,68 @@ use crate::mem::*;
 use crate::rooting::*;
 use crate::trace::*;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 pub struct InnerPtr<T: Trace + ?Sized> {
-    pub(crate) mark: AtomicBool,
-    pub(crate) fwd: Address,
+    pub(crate) fwdptr: AtomicUsize,
     pub(crate) value: T,
+}
+
+const MARK_BITS: usize = 2;
+const MARK_MASK: usize = (2 << MARK_BITS) - 1;
+const FWD_MASK: usize = !0 & !MARK_MASK;
+
+impl<T: Trace + ?Sized> InnerPtr<T> {
+    #[inline(always)]
+    pub fn fwdptr_non_atomic(&self) -> Address {
+        let fwdptr = self.fwdptr.load(Ordering::Relaxed);
+        (fwdptr & FWD_MASK).into()
+    }
+
+    #[inline(always)]
+    pub fn set_fwdptr_non_atomic(&mut self, addr: Address) {
+        debug_assert!((addr.to_usize() & MARK_MASK) == 0);
+        let fwdptr = self.fwdptr.load(Ordering::Relaxed);
+        self.fwdptr
+            .store(addr.to_usize() | (fwdptr & MARK_MASK), Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn mark_non_atomic(&mut self) {
+        let fwdptr = self.fwdptr.load(Ordering::Relaxed);
+        self.fwdptr.store(fwdptr | 1, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn unmark_non_atomic(&mut self) {
+        let fwdptr = self.fwdptr.load(Ordering::Relaxed);
+        self.fwdptr.store(fwdptr & FWD_MASK, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn is_marked_non_atomic(&self) -> bool {
+        let fwdptr = self.fwdptr.load(Ordering::Relaxed);
+        (fwdptr & MARK_MASK) != 0
+    }
+
+    #[inline(always)]
+    pub fn try_mark_non_atomic(&self) -> bool {
+        let fwdptr = self.fwdptr.load(Ordering::Relaxed);
+
+        if (fwdptr & MARK_MASK) != 0 {
+            return false;
+        }
+
+        self.fwdptr.store(fwdptr | 1, Ordering::Relaxed);
+        true
+    }
+
+    #[inline(always)]
+    pub fn try_mark(&self) -> bool {
+        let old = self.fwdptr.load(Ordering::Relaxed);
+        self.fwdptr
+            .compare_exchange(old, old | 1, Ordering::SeqCst, Ordering::Relaxed)
+            .is_ok()
+    }
 }
 
 pub struct GcHandle<T: Trace + ?Sized>(*mut InnerPtr<T>);
@@ -48,8 +105,7 @@ impl GlobalCollector {
         unsafe {
             if !ptr.is_null() {
                 ptr.write(InnerPtr {
-                    mark: AtomicBool::new(false),
-                    fwd: Address::null(),
+                    fwdptr: AtomicUsize::new(0),
                     value: x,
                 });
                 self.heap.push(GcHandle(ptr));
@@ -72,8 +128,7 @@ impl GlobalCollector {
                 .bump_alloc(std::mem::size_of::<InnerPtr<T>>())
                 .to_mut_ptr::<InnerPtr<T>>();
             ptr.write(InnerPtr {
-                mark: AtomicBool::new(false),
-                fwd: Address::null(),
+                fwdptr: AtomicUsize::new(0),
                 value: x,
             });
             self.heap.push(GcHandle(ptr));
@@ -232,9 +287,10 @@ impl<'a> MarkCompact<'a> {
             let value: *mut InnerPtr<dyn Trace> = value.0;
 
             unsafe {
-                if (*value).mark.load(Ordering::Relaxed) {
+                if (*value).is_marked_non_atomic() {
                     let fwd = self.allocate(std::mem::size_of_val(&*value));
-                    (*value).fwd = fwd;
+                    (*value).set_fwdptr_non_atomic(fwd);
+                    //(*value).fwd = fwd;
                     new_heap.push(GcHandle(value));
                 } else {
                     (*value).value.finalize();

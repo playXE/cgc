@@ -73,7 +73,8 @@ impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
-            inner.mark.store(true, Ordering::Relaxed);
+            //inner.mark.store(true, Ordering::Relaxed);
+            inner.mark_non_atomic();
             inner.value.mark();
         }
     }
@@ -96,7 +97,8 @@ impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
-            inner.mark.store(false, Ordering::Relaxed);
+            //inner.mark.store(false, Ordering::Relaxed);
+            inner.unmark_non_atomic();
             inner.value.unmark();
         }
     }
@@ -111,7 +113,8 @@ impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
-            inner.fwd = addr;
+            inner.set_fwdptr_non_atomic(addr);
+            //inner.fwd = addr;
         }
     }
 
@@ -119,7 +122,8 @@ impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
-            inner.fwd
+            inner.fwdptr_non_atomic()
+            //inner.fwd
         }
     }
 
@@ -223,6 +227,7 @@ impl<T: Trace + Sized + 'static> HeapTrait for Heap<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
+            inner.mark_non_atomic();
             inner.value.mark();
         }
     }
@@ -231,6 +236,7 @@ impl<T: Trace + Sized + 'static> HeapTrait for Heap<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
+            inner.unmark_non_atomic();
             inner.value.unmark();
         }
     }
@@ -245,7 +251,8 @@ impl<T: Trace + Sized + 'static> HeapTrait for Heap<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
-            inner.fwd = addr;
+            inner.set_fwdptr_non_atomic(addr);
+            //inner.fwd = addr;
         }
     }
 
@@ -253,7 +260,8 @@ impl<T: Trace + Sized + 'static> HeapTrait for Heap<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
-            inner.fwd
+            inner.fwdptr_non_atomic()
+            //inner.fwd
         }
     }
 
@@ -354,4 +362,14 @@ default impl<T: Trace + fmt::Debug> fmt::Debug for Rooted<T> {
     default fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.get())
     }
+}
+
+impl<T: Trace + Traceable> Traceable for Heap<T> {
+    fn trace_with<'a>(&'a mut self, f: impl FnMut(&'a mut dyn HeapTrait)) {
+        self.get_mut().trace_with(f);
+    }
+}
+
+impl<T: Trace> Finalizer for Heap<T> {
+    fn finalize(&mut self) {}
 }
