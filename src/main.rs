@@ -31,7 +31,7 @@ fn main() {
     {
         let mut v = gc.alloc(vec![]);
 
-        for _ in 0..1000000 {
+        for _ in 0..100 {
             v.get_mut()
                 .push(gc.alloc(Foo { x: 0, next: None }).to_heap());
         }

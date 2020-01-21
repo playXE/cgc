@@ -93,6 +93,22 @@ impl FreeList {
         FreeList { classes }
     }
 
+    pub fn fragmentation(&self) -> f64 {
+        let mut largest = 0;
+        let mut total = 0;
+
+        for class in self.classes.iter() {
+            for (_, size) in class.sizes.iter() {
+                let size = *size;
+                total += size;
+                if size > largest {
+                    largest = size;
+                }
+            }
+        }
+        largest as f64 / total as f64
+    }
+
     pub fn add(&mut self, addr: Address, size: usize) {
         if size < SIZE_SMALLEST {
             //fill_region(vm, addr, addr.offset(size));
@@ -103,6 +119,7 @@ impl FreeList {
         let szclass = SizeClass::next_down(size);
 
         let free_class = &mut self.classes[szclass.idx()];
+        free_class.sizes.insert(addr, size);
         free_class.head = FreeSpace(addr);
     }
 
@@ -115,7 +132,8 @@ impl FreeList {
 
             if result.is_non_null() {
                 assert!(self.classes[class].size(result.0) >= size);
-                return (result, self.classes[class].size(result.0));
+                let size = self.classes[class].sizes.remove(&result.0).unwrap();
+                return (result, size);
             }
         }
 
@@ -140,8 +158,9 @@ impl FreeListClass {
         }
     }
 
-    fn add(&mut self, addr: FreeSpace) {
+    fn add(&mut self, addr: FreeSpace, size: usize) {
         addr.set_next(self.head);
+        self.sizes.insert(addr.0, size);
         self.head = addr;
     }
 
