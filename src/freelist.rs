@@ -106,6 +106,11 @@ impl FreeList {
                 }
             }
         }
+
+        if largest == 0 {
+            largest = 1;
+        }
+
         largest as f64 / total as f64
     }
 

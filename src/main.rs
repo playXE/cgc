@@ -20,13 +20,12 @@ impl Traceable for Foo {
 
 impl Finalizer for Foo {
     fn finalize(&mut self) {
-        //println!("finalize foo {}", self.x);
+        println!("finalize foo {}", self.x);
         self.x += 1;
     }
 }
 
 fn main() {
-    let n = time::Instant::now();
     let mut gc = GlobalCollector::new(1024 * 1024 * 100);
     {
         let mut v = gc.alloc(vec![]);
@@ -37,7 +36,5 @@ fn main() {
         }
         println!("done");
     }
-
     gc.compact();
-    println!("{}", n.elapsed().whole_milliseconds());
 }

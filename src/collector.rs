@@ -99,8 +99,8 @@ impl GlobalCollector {
     pub fn alloc<T: Trace + Sized + 'static>(&mut self, x: T) -> Rooted<T> {
         //let mut timer = Timer::new(true);
         let ptr = self
-            .sweep_alloc
-            .allocate(std::mem::size_of::<InnerPtr<T>>())
+            .alloc
+            .bump_alloc(std::mem::size_of::<InnerPtr<T>>())
             .to_mut_ptr::<InnerPtr<T>>();
         unsafe {
             if !ptr.is_null() {
@@ -124,8 +124,8 @@ impl GlobalCollector {
 
             self.compact();
             let ptr = self
-                .sweep_alloc
-                .allocate(std::mem::size_of::<InnerPtr<T>>())
+                .alloc
+                .bump_alloc(std::mem::size_of::<InnerPtr<T>>())
                 .to_mut_ptr::<InnerPtr<T>>();
             ptr.write(InnerPtr {
                 fwdptr: AtomicUsize::new(0),
@@ -225,35 +225,49 @@ impl Drop for GlobalCollector {
     }
 }
 
+pub struct MarkAndSweep<'a> {
+    rootset: &'a [RootHandle],
+    heap_objects: &'a [GcHandle<dyn Trace>],
+}
+
+impl<'a> MarkAndSweep<'a> {
+    pub fn collect(&mut self) -> (Vec<RootHandle>, Vec<GcHandle<dyn Trace>>) {
+        unimplemented!()
+    }
+
+    pub fn mark_live(&mut self) {
+        for root in self.rootset.iter() {
+            let root: Ptr<dyn RootedTrait> = Ptr(root.0);
+            if root.get().is_rooted() {
+                root.get().mark();
+                let mut fields = root.get().fields();
+
+                for field in fields.iter_mut() {
+                    field.mark();
+                }
+            }
+        }
+    }
+
+    pub fn sweep(&mut self) -> (Vec<RootHandle>, Vec<GcHandle<dyn Trace>>) {
+        unimplemented!()
+    }
+}
+
 pub struct MarkSweepCompact<'a> {
     heap: Region,
     top: Address,
     rootset: &'a [RootHandle],
     heap_objects: &'a [GcHandle<dyn Trace>],
-    sweepalloc: &'a mut SweepAllocator,
+    sweepalloc: &'a SweepAllocator,
 }
 
 impl<'a> MarkSweepCompact<'a> {
     pub fn collect(&mut self) -> (Vec<RootHandle>, Vec<GcHandle<dyn Trace>>) {
         self.mark_live();
         let new_heap = self.sweep();
-        if self.sweepalloc.free_list.fragmentation() >= 0.70 {
-            self.compute_forward();
-            println!("comapcting");
-            self.sweepalloc
-                .free_list
-                .add(self.top, self.heap.end.to_usize() - self.top.to_usize());
-            (self.relocate(), new_heap)
-        } else {
-            let mut rootset = vec![];
-            for root in self.rootset.iter() {
-                if unsafe { (*root.0).is_rooted() } {
-                    rootset.push(RootHandle(root.0))
-                }
-            }
-
-            (rootset, new_heap)
-        }
+        self.compute_forward();
+        (self.relocate(), new_heap)
     }
 
     pub fn mark_live(&mut self) {
@@ -277,13 +291,6 @@ impl<'a> MarkSweepCompact<'a> {
             unsafe {
                 if !(*value).is_marked_non_atomic() {
                     (*value).value.finalize();
-                    let start = Address::from_ptr(value as *const u8);
-
-                    self.sweepalloc
-                        .free_list
-                        .add(start, std::mem::size_of_val(&*value));
-                } else {
-                    new_heap.push(GcHandle(value));
                 }
             }
         }
