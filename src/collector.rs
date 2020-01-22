@@ -173,6 +173,7 @@ impl GlobalCollector {
         if compacted {
             self.sweep_alloc.top = mc.top;
             self.sweep_alloc.limit = self.memory_heap.end;
+            self.sweep_alloc.free_list = FreeList::new(); // reset free list since we compacted the heap
         }
         self.sweep_alloc.free_list = mc.freelist;
         self.roots = rootset;
@@ -204,7 +205,7 @@ impl<'a> MarkCompact<'a> {
         trace!("Mark-Compact GC: Phase 1 (marking)");
         self.mark_live();
         trace!("Mark-Compact GC: Phase 2 (sweep)");
-        let new_heap = self.sweep();
+        let new_heap = self.sweep(fragmentation >= 0.50);
         if fragmentation >= 0.50 {
             trace!("Mark-Compact GC: Phase 3 (compaction)");
             self.compute_forward();
@@ -236,7 +237,7 @@ impl<'a> MarkCompact<'a> {
         }
     }
 
-    pub fn sweep(&mut self) -> Vec<GcHandle<dyn Trace>> {
+    pub fn sweep(&mut self, fragmented: bool) -> Vec<GcHandle<dyn Trace>> {
         let mut new_heap = vec![];
         let mut garbage_start = Address::null();
         trace!(
@@ -247,7 +248,9 @@ impl<'a> MarkCompact<'a> {
             let value: *mut InnerPtr<dyn Trace> = value.0;
             unsafe {
                 if (*value).is_marked_non_atomic() {
-                    self.add_freelist(garbage_start, Address::from_ptr(value as *const u8));
+                    if !fragmented {
+                        self.add_freelist(garbage_start, Address::from_ptr(value as *const u8));
+                    }
                     garbage_start = Address::null();
                     new_heap.push(GcHandle(value));
                 } else if garbage_start.is_non_null() {
@@ -260,7 +263,9 @@ impl<'a> MarkCompact<'a> {
                 }
             }
         }
-        self.add_freelist(garbage_start, self.heap.end);
+        if !fragmented {
+            self.add_freelist(garbage_start, self.heap.end);
+        }
 
         new_heap
     }
