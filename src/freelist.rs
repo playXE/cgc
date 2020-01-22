@@ -137,7 +137,6 @@ impl FreeList {
             let result = self.classes[class].first();
 
             if result.is_non_null() {
-                println!("alloc {:x} {}", (result.0).to_usize(), size);
                 assert!(self.classes[class].size(result.0) >= size);
                 let size = self.classes[class].sizes.remove(&result.0).unwrap();
                 return (result, size);
