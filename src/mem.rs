@@ -319,6 +319,13 @@ pub fn commit(size: usize, executable: bool) -> Address {
     Address::from_ptr(ptr)
 }
 
+#[cfg(target_family = "unix")]
+pub fn memory_limit() -> usize {
+    return unsafe {
+        libc::sysconf(libc::_SC_PHYS_PAGES) * libc::sysconf(libc::_SC_PAGESIZE);
+    };
+}
+
 #[cfg(target_family = "windows")]
 pub fn commit(size: usize, executable: bool) -> Address {
     debug_assert!(mem::is_page_aligned(size));

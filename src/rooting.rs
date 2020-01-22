@@ -39,8 +39,10 @@ impl<T: Trace + ?Sized> Rooted<T> {
     /// Returns reference to rooted value
     pub fn get(&self) -> &T {
         unsafe {
+            let guard = crate::COLLECTOR.read();
             let inner = &*self.inner;
             let inner = &*inner.inner;
+            drop(guard);
             &inner.value
         }
     }
@@ -54,8 +56,10 @@ impl<T: Trace + ?Sized> Rooted<T> {
     ///
     pub fn get_mut(&mut self) -> &mut T {
         unsafe {
+            let guard = crate::COLLECTOR.read();
             let inner = &*self.inner;
             let inner = &mut *inner.inner;
+            drop(guard);
             &mut inner.value
         }
     }
@@ -187,8 +191,10 @@ impl<T: Trace + ?Sized> From<&Rooted<T>> for Heap<T> {
 impl<T: Trace + ?Sized> Heap<T> {
     pub fn get(&self) -> &T {
         unsafe {
+            let guard = crate::COLLECTOR.read();
             debug_assert!(!self.inner.is_null());
             let inner = &*self.inner;
+            drop(guard);
             &inner.value
         }
     }
@@ -198,13 +204,14 @@ impl<T: Trace + ?Sized> Heap<T> {
     /// # Safety
     /// Rust semantics doesn't allow two mutable references at the same time and this function is safe as long as you have only one mutable reference.
     ///
-    /// If you want to be 100% sure that you don't have two or more mutable references at the same time please use `Rooted<RefCell<T>>`
+    /// If you want to be 100% sure that you don't have two or more mutable references at the same time please use `Heap<RefCell<T>>`
     ///
     ///
     pub fn get_mut(&mut self) -> &mut T {
         unsafe {
+            let guard = crate::COLLECTOR.read();
             let inner = &mut *self.inner;
-
+            drop(guard);
             &mut inner.value
         }
     }

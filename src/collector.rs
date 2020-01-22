@@ -183,6 +183,7 @@ impl GlobalCollector {
 
 impl Drop for GlobalCollector {
     fn drop(&mut self) {
+        self.collect();
         uncommit(self.memory_heap.start, self.memory_heap.size());
     }
 }
