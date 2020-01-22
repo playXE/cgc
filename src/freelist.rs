@@ -93,7 +93,7 @@ impl FreeList {
         FreeList { classes }
     }
 
-    pub fn fragmentation(&self) -> f64 {
+    pub fn fragmentation(&self) -> f32 {
         let mut largest = 0;
         let mut total = 0;
 
@@ -107,16 +107,17 @@ impl FreeList {
             }
         }
 
-        if largest == 0 {
-            largest = 1;
+        if total == 0 {
+            return 0.0;
         }
 
-        largest as f64 / total as f64
+        1.0 - largest as f32 / total as f32
     }
 
     pub fn add(&mut self, addr: Address, size: usize) {
         if size < SIZE_SMALLEST {
             //fill_region(vm, addr, addr.offset(size));
+            println!("not smallest");
             return;
         }
 
@@ -136,6 +137,7 @@ impl FreeList {
             let result = self.classes[class].first();
 
             if result.is_non_null() {
+                println!("alloc {:x} {}", (result.0).to_usize(), size);
                 assert!(self.classes[class].size(result.0) >= size);
                 let size = self.classes[class].sizes.remove(&result.0).unwrap();
                 return (result, size);

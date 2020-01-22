@@ -31,7 +31,7 @@ fn main() {
         let _y = gc.alloc(Foo { x: 4, next: None });
     }
     let x = gc.alloc(Foo { x: 3, next: None });
-    gc.compact();
+    gc.collect();
     let z = gc.alloc(Foo {
         x: 5,
         next: Some(Heap::from(&x)),
@@ -39,6 +39,6 @@ fn main() {
 
     println!("{}", x.get().x);
 
-    gc.compact();
+    gc.collect();
     println!("{}", z.get().x);
 }

@@ -1,4 +1,6 @@
 #![feature(specialization)]
+#[macro_use]
+extern crate log;
 
 pub mod bump;
 pub mod collector;

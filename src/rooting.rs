@@ -7,6 +7,11 @@ pub struct Rooted<T: Trace + ?Sized> {
     pub(crate) inner: *mut RootedInner<T>,
 }
 
+pub(crate) struct RootedInner<T: Trace + ?Sized> {
+    pub(crate) rooted: AtomicBool,
+    pub(crate) inner: *mut InnerPtr<T>,
+}
+
 impl<T: Trace + ?Sized> Drop for Rooted<T> {
     fn drop(&mut self) {
         unsafe {
@@ -16,6 +21,7 @@ impl<T: Trace + ?Sized> Drop for Rooted<T> {
         }
     }
 }
+
 /*
 impl<T: Trace + Sized + 'static> Traceable for Heap<T> {
     fn trace_with<'a>(&'a mut self, mut f: impl FnMut(&'a mut dyn HeapTrait)) {
@@ -61,11 +67,6 @@ impl<T: Trace + ?Sized> Rooted<T> {
             }
         }
     }
-}
-
-pub(crate) struct RootedInner<T: Trace + ?Sized> {
-    pub(crate) rooted: AtomicBool,
-    pub(crate) inner: *mut InnerPtr<T>,
 }
 
 impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
