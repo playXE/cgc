@@ -8,8 +8,17 @@ pub struct InnerPtr<T: Trace + ?Sized> {
     pub(crate) value: T,
 }
 
+unsafe impl<T: Trace + ?Sized> Send for InnerPtr<T> {}
+unsafe impl<T: Trace + ?Sized> Sync for InnerPtr<T> {}
+
 const MARK_BITS: usize = 2;
 const MARK_MASK: usize = (2 << MARK_BITS) - 1;
+const COLOR_MASK: usize = 7;
+const GC_GRAY: usize = 0;
+const GC_WHITE_A: usize = 1;
+const GC_WHITE_B: usize = 1 << 1;
+const GC_WHITES: usize = GC_WHITE_A | GC_WHITE_B;
+
 const FWD_MASK: usize = !0 & !MARK_MASK;
 
 impl<T: Trace + ?Sized> InnerPtr<T> {
@@ -30,6 +39,7 @@ impl<T: Trace + ?Sized> InnerPtr<T> {
     #[inline(always)]
     pub fn mark_non_atomic(&mut self) {
         let fwdptr = self.fwdptr.load(Ordering::Relaxed);
+
         self.fwdptr.store(fwdptr | 1, Ordering::Relaxed);
     }
 
@@ -52,7 +62,6 @@ impl<T: Trace + ?Sized> InnerPtr<T> {
         if (fwdptr & MARK_MASK) != 0 {
             return false;
         }
-
         self.fwdptr.store(fwdptr | 1, Ordering::Relaxed);
         true
     }
@@ -67,13 +76,13 @@ impl<T: Trace + ?Sized> InnerPtr<T> {
 }
 
 pub struct GcHandle<T: Trace + ?Sized>(*mut InnerPtr<T>);
-pub struct RootHandle(*mut dyn RootedTrait);
+pub struct RootHandle(pub(crate) *mut dyn RootedTrait);
 
 pub struct GlobalCollector {
     heap: Vec<GcHandle<dyn Trace>>,
     roots: Vec<RootHandle>,
     memory_heap: Region,
-    alloc: crate::bump::BumpAllocator,
+
     sweep_alloc: SweepAllocator,
     //stats: parking_lot::Mutex<CollectionStats>,
 }
@@ -90,18 +99,11 @@ impl GlobalCollector {
             heap: vec![],
             roots: vec![],
             memory_heap: heap,
-            alloc: crate::bump::BumpAllocator::new(heap.start, heap.end),
             sweep_alloc: SweepAllocator::new(heap),
-            //stats: parking_lot::Mutex::new(CollectionStats::new()),
         }
     }
 
     pub fn alloc<T: Trace + Sized + 'static>(&mut self, x: T) -> Rooted<T> {
-        //let mut timer = Timer::new(true);
-        /*let ptr = self
-        .alloc
-        .bump_alloc(std::mem::size_of::<InnerPtr<T>>())
-        .to_mut_ptr::<InnerPtr<T>>();*/
         let ptr = self
             .sweep_alloc
             .allocate(std::mem::size_of::<InnerPtr<T>>())
@@ -145,9 +147,6 @@ impl GlobalCollector {
             let root = Rooted { inner: rooted };
 
             self.roots.push(RootHandle(rooted));
-            //let stop = timer.stop();
-            //let mut stats = self.stats.lock();
-            //stats.add_alloc(stop);
             return root;
         }
     }
@@ -169,7 +168,31 @@ impl GlobalCollector {
             freelist: FreeList::new(),
         };
         let (rootset, heap, compacted) = mc.collect(self.sweep_alloc.free_list.fragmentation());
-        //self.alloc.reset(mc.top, self.memory_heap.end);
+
+        if compacted {
+            self.sweep_alloc.top = mc.top;
+            self.sweep_alloc.limit = self.memory_heap.end;
+            self.sweep_alloc.free_list = FreeList::new(); // reset free list since we compacted the heap
+        }
+        self.sweep_alloc.free_list = mc.freelist;
+        self.roots = rootset;
+        self.heap = heap;
+        trace!("Mark-Compact GC: Stop");
+    }
+
+    pub fn force_compact(&mut self) {
+        self.heap.sort_unstable_by(|x, y| {
+            Address::from_ptr(x.0 as *const u8).cmp(&Address::from_ptr(y.0 as *const u8))
+        });
+
+        let mut mc = MarkCompact {
+            heap: self.memory_heap,
+            heap_objects: &self.heap,
+            rootset: &self.roots,
+            top: self.memory_heap.start,
+            freelist: FreeList::new(),
+        };
+        let (rootset, heap, compacted) = mc.collect(1.0);
         if compacted {
             self.sweep_alloc.top = mc.top;
             self.sweep_alloc.limit = self.memory_heap.end;
@@ -184,8 +207,36 @@ impl GlobalCollector {
 
 impl Drop for GlobalCollector {
     fn drop(&mut self) {
+        trace!("Mark-Compact GC: GC droped.Start collection");
         self.collect();
         uncommit(self.memory_heap.start, self.memory_heap.size());
+    }
+}
+
+const GC_STEP_SIZE: usize = 1024;
+const GC_STEP_RATION: usize = 200;
+
+#[derive(PartialEq, Eq)]
+enum IncrementalState {
+    Done,
+    Marking,
+    Sweeping,
+}
+
+pub struct IncrementalCollection<'a> {
+    state: IncrementalState,
+    rootset: &'a [RootHandle],
+}
+
+impl<'a> IncrementalCollection<'a> {
+    pub fn step(&mut self) {
+        let (limit, mut result) = ((GC_STEP_SIZE / 100) * GC_STEP_RATION, 0);
+
+        while result < limit {
+            if self.state == IncrementalState::Done {
+                break;
+            }
+        }
     }
 }
 
@@ -206,6 +257,7 @@ impl<'a> MarkCompact<'a> {
         self.mark_live();
         trace!("Mark-Compact GC: Phase 2 (sweep)");
         let new_heap = self.sweep(fragmentation >= 0.50);
+
         if fragmentation >= 0.50 {
             trace!("Mark-Compact GC: Phase 3 (compaction)");
             self.compute_forward();
@@ -223,18 +275,28 @@ impl<'a> MarkCompact<'a> {
         }
     }
 
-    pub fn mark_live(&mut self) {
+    pub fn mark_live(&mut self) -> usize {
+        let mut result = 0;
         for root in self.rootset.iter() {
             let root: Ptr<dyn RootedTrait> = Ptr(root.0);
             if root.get().is_rooted() {
-                root.get().mark();
-                let mut fields = root.get().fields();
+                unsafe {
+                    if !(*root.get().inner()).is_marked_non_atomic() {
+                        (*root.get().inner()).mark_non_atomic();
+                        let mut fields = root.get().fields();
 
-                for field in fields.iter_mut() {
-                    field.mark();
+                        for field in fields.iter_mut() {
+                            if (*field.inner()).is_marked_non_atomic() == false {
+                                (*field.inner()).mark_non_atomic();
+                                result += 1;
+                            }
+                        }
+                        result += 1;
+                    }
                 }
             }
         }
+        result
     }
 
     pub fn sweep(&mut self, fragmented: bool) -> Vec<GcHandle<dyn Trace>> {

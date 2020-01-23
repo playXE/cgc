@@ -815,19 +815,19 @@ impl<T> PartialEq for Ptr<T> {
 
 impl<T> Eq for Ptr<T> {}
 
-impl<T> Copy for Ptr<T> {}
-impl<T> Clone for Ptr<T> {
+impl<T: ?Sized> Copy for Ptr<T> {}
+impl<T: ?Sized> Clone for Ptr<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T> std::ops::Deref for Ptr<T> {
+impl<T: ?Sized> std::ops::Deref for Ptr<T> {
     type Target = T;
     fn deref(&self) -> &T {
         self.get()
     }
 }
 
-unsafe impl<T> Send for Ptr<T> {}
-unsafe impl<T> Sync for Ptr<T> {}
+unsafe impl<T: ?Sized> Send for Ptr<T> {}
+unsafe impl<T: ?Sized + Sync> Sync for Ptr<T> {}

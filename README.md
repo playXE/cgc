@@ -1,5 +1,5 @@
 # cgc 
-cgc is a compacting garbage collector
+cgc is a compacting garbage collector. 
 
 
 ## How it works?

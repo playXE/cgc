@@ -79,8 +79,10 @@ impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
             //inner.mark.store(true, Ordering::Relaxed);
-            inner.mark_non_atomic();
-            inner.value.mark();
+            if !inner.is_marked_non_atomic() {
+                inner.mark_non_atomic();
+                inner.value.mark();
+            }
         }
     }
     fn addr(&self) -> Address {
@@ -235,8 +237,10 @@ impl<T: Trace + Sized + 'static> HeapTrait for Heap<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
-            inner.mark_non_atomic();
-            inner.value.mark();
+            if !inner.is_marked_non_atomic() {
+                inner.mark_non_atomic();
+                inner.value.mark();
+            }
         }
     }
 
