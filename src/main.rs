@@ -25,13 +25,10 @@ fn main() {
     simple_logger::init().unwrap();
     let mut gc = GlobalCollector::new(1024 * 1024);
     {
-        let mut v = gc.alloc(vec![]);
-        for _ in 0..1000 {
-            v.get_mut()
-                .push(gc.alloc(Foo { x: 0, next: None }).to_heap());
-        }
-        gc.collect();
-    }
-
-    gc.collect();
+	for _ in 0..100 {
+		let x = gc.alloc(42);
+		}
+	}
+	let y = gc.alloc(3);
+	gc.major();
 }
