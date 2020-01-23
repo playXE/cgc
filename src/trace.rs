@@ -25,6 +25,9 @@ pub trait HeapTrait {
     fn inner(&self) -> *mut crate::collector::InnerPtr<dyn Trace> {
         unimplemented!()
     }
+
+    fn color(&self) -> crate::collector::GcColor;
+    fn set_color(&self, _: crate::collector::GcColor);
 }
 /// The Traceable trait, which needs to be implemented on garbage-collected objects.
 pub trait Traceable

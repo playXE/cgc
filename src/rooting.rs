@@ -74,6 +74,19 @@ impl<T: Trace + ?Sized> Rooted<T> {
 }
 
 impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
+    fn color(&self) -> GcColor {
+        unsafe {
+            let inner = &mut *self.inner;
+            inner.color()
+        }
+    }
+
+    fn set_color(&self, c: crate::collector::GcColor) {
+        unsafe {
+            let inner = &mut *self.inner;
+            inner.set_color(c)
+        }
+    }
     fn mark(&mut self) {
         unsafe {
             debug_assert!(!self.inner.is_null());
@@ -218,6 +231,19 @@ impl<T: Trace + ?Sized> Heap<T> {
 }
 
 impl<T: Trace + Sized + 'static> HeapTrait for Heap<T> {
+    fn color(&self) -> GcColor {
+        unsafe {
+            let inner = &mut *self.inner;
+            inner.color()
+        }
+    }
+
+    fn set_color(&self, c: crate::collector::GcColor) {
+        unsafe {
+            let inner = &mut *self.inner;
+            inner.set_color(c)
+        }
+    }
     fn addr(&self) -> Address {
         Address::from_ptr(self.inner as *const u8)
     }
