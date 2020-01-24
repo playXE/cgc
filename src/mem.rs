@@ -374,7 +374,7 @@ pub fn commit_at(ptr: Address, size: usize, executable: bool) {
     debug_assert!(mem::is_page_aligned(size));
 
     use kernel32::VirtualAlloc;
-    use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, PAGE_READWRITE};
+    use winapi::um::winnt::{MEM_COMMIT, PAGE_EXECUTE_READWRITE, PAGE_READWRITE};
 
     let prot = if executable {
         PAGE_EXECUTE_READWRITE
@@ -445,7 +445,7 @@ pub fn discard(ptr: Address, size: usize) {
     debug_assert!(mem::is_page_aligned(size));
 
     use kernel32::VirtualFree;
-    use winapi::um::winnt::{MEM_DECOMMIT, PAGE_NOACCESS};
+    use winapi::um::winnt::MEM_DECOMMIT;
 
     let _ = unsafe { VirtualFree(ptr.to_mut_ptr(), size as u64, MEM_DECOMMIT) };
 }

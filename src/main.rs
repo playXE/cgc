@@ -24,11 +24,9 @@ impl Finalizer for Foo {
 fn main() {
     simple_logger::init().unwrap();
     let mut gc = GlobalCollector::new(1024 * 1024);
-    {
-	for _ in 0..100 {
-		let x = gc.alloc(42);
-		}
-	}
-	let y = gc.alloc(3);
-	gc.major();
+    let mut x: Rooted<Vec<cgc::Heap<i32>>> = gc.alloc(vec![]);
+    let y = gc.alloc(42);
+
+    cgc::write_barrier(&x.to_heap(), &y.to_heap());
+    x.get_mut().push(y.to_heap());
 }

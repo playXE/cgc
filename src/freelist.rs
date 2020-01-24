@@ -163,7 +163,7 @@ impl FreeListClass {
             sizes: HashMap::with_capacity_and_hasher(100, FxBuildHasher::default()),
         }
     }
-
+    #[allow(dead_code)]
     fn add(&mut self, addr: FreeSpace, size: usize) {
         addr.set_next(self.head);
         self.sizes.insert(addr.0, size);

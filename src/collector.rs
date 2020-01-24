@@ -15,8 +15,6 @@ pub enum GcColor {
 const INITIAL_THRESHOLD: usize = 16;
 const USED_SPACE_RATIO: f64 = 0.5;
 
-
-
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 pub struct InnerPtr<T: Trace + ?Sized> {
     pub(crate) color: AtomicU8,
@@ -98,12 +96,10 @@ pub struct GlobalCollector {
     heap: Vec<GcHandle<dyn Trace>>,
     roots: Vec<RootHandle>,
     memory_heap: Region,
-    alloc: crate::bump::BumpAllocator,
     sweep_alloc: SweepAllocator,
     white_is_black: bool,
-	pub(crate)grey_list: Mutex<LinkedList<GcHandle<dyn Trace>>>,
-	threshold: usize
-    //stats: parking_lot::Mutex<CollectionStats>,
+    pub(crate) grey_list: Mutex<LinkedList<GcHandle<dyn Trace>>>,
+    threshold: usize, //stats: parking_lot::Mutex<CollectionStats>,
 }
 
 impl GlobalCollector {
@@ -118,10 +114,9 @@ impl GlobalCollector {
             heap: vec![],
             roots: vec![],
             memory_heap: heap,
-            alloc: crate::bump::BumpAllocator::new(heap.start, heap.end),
             sweep_alloc: SweepAllocator::new(heap),
-			grey_list: Mutex::new(LinkedList::new()),
-			threshold: INITIAL_THRESHOLD,
+            grey_list: Mutex::new(LinkedList::new()),
+            threshold: INITIAL_THRESHOLD,
             white_is_black: false, //stats: parking_lot::Mutex::new(CollectionStats::new()),
         }
     }
@@ -137,19 +132,17 @@ impl GlobalCollector {
         } else {
             GcColor::White
         };
-		if self.threshold < self.heap.len() {
-			self.minor();
-			if self.heap.len()  as f64 > self.threshold as f64 * USED_SPACE_RATIO {
-				panic!();
-				self.threshold = (self.heap.len() as f64 / USED_SPACE_RATIO) as usize;
-			} 
-		}
+        if self.threshold < self.heap.len() {
+            self.minor();
+            if self.heap.len() as f64 > self.threshold as f64 * USED_SPACE_RATIO {
+                self.threshold = (self.heap.len() as f64 / USED_SPACE_RATIO) as usize;
+            }
+        }
         let ptr = self
             .sweep_alloc
             .allocate(std::mem::size_of::<InnerPtr<T>>())
             .to_mut_ptr::<InnerPtr<T>>();
         unsafe {
-			
             if !ptr.is_null() {
                 ptr.write(InnerPtr {
                     color: AtomicU8::new(color as _),
@@ -176,14 +169,14 @@ impl GlobalCollector {
                 .allocate(std::mem::size_of::<InnerPtr<T>>())
                 .to_mut_ptr::<InnerPtr<T>>();
             if ptr.is_null() {
-				self.major();
-                ptr =self
-                	.sweep_alloc
-                	.allocate(std::mem::size_of::<InnerPtr<T>>())
-                	.to_mut_ptr::<InnerPtr<T>>();
-				if ptr.is_null() {
-					panic!("OOM");
-				}
+                self.major();
+                ptr = self
+                    .sweep_alloc
+                    .allocate(std::mem::size_of::<InnerPtr<T>>())
+                    .to_mut_ptr::<InnerPtr<T>>();
+                if ptr.is_null() {
+                    panic!("OOM");
+                }
             }
             ptr.write(InnerPtr {
                 color: AtomicU8::new(color as _),
@@ -200,9 +193,6 @@ impl GlobalCollector {
             let root = Rooted { inner: rooted };
 
             self.roots.push(RootHandle(rooted));
-            //let stop = timer.stop();
-            //let mut stats = self.stats.lock();
-            //stats.add_alloc(stop);
             return root;
         }
     }
@@ -210,40 +200,37 @@ impl GlobalCollector {
     pub fn fragmentation(&self) -> f32 {
         self.sweep_alloc.free_list.fragmentation()
     }
-	pub fn minor(&mut self) {
-		self.heap.sort_unstable_by(|x, y| {
+    pub fn minor(&mut self) {
+        self.heap.sort_unstable_by(|x, y| {
             Address::from_ptr(x.0 as *const u8).cmp(&Address::from_ptr(y.0 as *const u8))
         });
-		if self.sweep_alloc.free_list.fragmentation() < 0.6 {
-			trace!("Mark-Compact GC: Incremental Mark&Sweep start");
-			let mut lock = self.grey_list.lock();
-			let prev = self.heap.len();
-			let mut inc = IncrementalMarkAndSweep {
-				scan_list: &mut *lock,
-				heap: &self.heap,
-				rootset: &self.roots,
-				freelist: FreeList::new(),
-				heap_region: self.memory_heap,
-				new_rootset: vec![],
-				new_heap: vec![],
-				state: IncrementalState::Roots,
-			};	
-			
-			inc.collect(32);
-			
-				self.sweep_alloc.free_list = inc.freelist;
-			
-			let new_heap = inc.new_heap;
-			let roots = inc.new_rootset;
-			self.heap = new_heap;
-			
-			self.roots = roots;
-			
-		} else {
-			self.major();
-		}
-			
-	}
+        if self.sweep_alloc.free_list.fragmentation() < 0.6 {
+            trace!("Incremental Mark&Sweep: Start");
+            let mut lock = self.grey_list.lock();
+            let mut inc = IncrementalMarkAndSweep {
+                scan_list: &mut *lock,
+                heap: &self.heap,
+                rootset: &self.roots,
+                freelist: FreeList::new(),
+                heap_region: self.memory_heap,
+                new_rootset: vec![],
+                new_heap: vec![],
+                state: IncrementalState::Roots,
+            };
+
+            inc.collect(32);
+
+            self.sweep_alloc.free_list = inc.freelist;
+
+            let new_heap = inc.new_heap;
+            let roots = inc.new_rootset;
+            self.heap = new_heap;
+
+            self.roots = roots;
+        } else {
+            self.major();
+        }
+    }
     pub fn major(&mut self) {
         self.heap.sort_unstable_by(|x, y| {
             Address::from_ptr(x.0 as *const u8).cmp(&Address::from_ptr(y.0 as *const u8))
@@ -272,7 +259,7 @@ impl GlobalCollector {
 
 impl Drop for GlobalCollector {
     fn drop(&mut self) {
-		trace!("Mark-Compact GC: Final major collection");
+        trace!("Mark-Compact GC: Final major collection");
         self.major();
         uncommit(self.memory_heap.start, self.memory_heap.size());
     }
@@ -307,34 +294,38 @@ impl<'a> IncrementalMarkAndSweep<'a> {
                 break;
             }
         }
+        trace!("Incremental Mark&Sweep: Stop");
     }
 
     fn step(&mut self, limit: usize) -> usize {
         match &self.state {
             IncrementalState::Roots => {
-				trace!("Incremental Mark&Sweep: Mark roots phase");
+                trace!("Incremental Mark&Sweep: Phase 0 ( mark roots )");
                 for root in self.rootset.iter() {
                     let root = Ptr(root.0);
                     if root.get().is_rooted() {
+                        trace!(
+                            "Incremental Mark&Sweep: Root 0x{:p}",
+                            root.get().inner() as *const u8
+                        );
                         self.scan_list.push_front(GcHandle(root.get().inner()));
                         self.new_rootset.push(RootHandle(root.0));
                     }
                 }
-				self.state = IncrementalState::Mark;
+                self.state = IncrementalState::Mark;
                 return 0;
             }
             IncrementalState::Mark => {
                 if !self.scan_list.is_empty() {
-					trace!("Incremental Mark&Sweep: Mark phase");
+                    trace!("Incremental Mark&Sweep: Phase 1 (marking)");
                     return self.mark(limit);
                 } else {
-				
                     self.state = IncrementalState::Sweep;
                     return 0;
                 }
             }
             IncrementalState::Sweep => {
-				trace!("Incremental Mark&Sweep: Sweep phase");
+                trace!("Incremental Mark&Sweep: Phase 2 (sweep)");
                 self.sweep(limit);
                 self.state = IncrementalState::Done;
                 return 0;
@@ -361,10 +352,16 @@ impl<'a> IncrementalMarkAndSweep<'a> {
                     object.get().set_color(GcColor::White);
                     new_heap.push(GcHandle(object.0));
                 } else if garbage_start.is_non_null() {
-					trace!("Incremental Mark&Sweep: Sweep 0x{:p}",object.0 as *const u8);
+                    trace!(
+                        "Incremental Mark&Sweep: Sweep 0x{:p}",
+                        object.0 as *const u8
+                    );
                     object.get().value.finalize();
                 } else {
-					trace!("Incremental Mark&Sweep: Sweep 0x{:p}",object.0 as *const u8);	
+                    trace!(
+                        "Incremental Mark&Sweep: Sweep 0x{:p}",
+                        object.0 as *const u8
+                    );
                     object.get().value.finalize();
                     garbage_start = Address::from_ptr(object.0 as *const u8);
                 }
@@ -468,21 +465,16 @@ impl<'a> MarkCompact<'a> {
             }
         }
 
-
-
         while let Some(value) = gray.pop_front() {
-			let value = Ptr(value.0);
-			
-			value.get().set_color(GcColor::Black);
-			for field in value.get().value.fields() {
-				unsafe { (*field.inner()).set_color(GcColor::Grey)};
-				gray.push_back(GcHandle(field.inner()));
-			}
-		
-		}
-	}
-    
+            let value = Ptr(value.0);
 
+            value.get().set_color(GcColor::Black);
+            for field in value.get().value.fields() {
+                unsafe { (*field.inner()).set_color(GcColor::Grey) };
+                gray.push_back(GcHandle(field.inner()));
+            }
+        }
+    }
     pub fn sweep(&mut self, fragmented: bool) -> Vec<GcHandle<dyn Trace>> {
         let mut new_heap = vec![];
         let mut garbage_start = Address::null();
@@ -497,7 +489,7 @@ impl<'a> MarkCompact<'a> {
                     if !fragmented {
                         self.add_freelist(garbage_start, Address::from_ptr(value as *const u8));
                     }
-					(*value).set_color(GcColor::White);
+                    (*value).set_color(GcColor::White);
                     garbage_start = Address::null();
                     new_heap.push(GcHandle(value));
                 } else if garbage_start.is_non_null() {
