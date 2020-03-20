@@ -1,32 +1,23 @@
 extern crate cgc;
-
-use cgc::collector::*;
-use cgc::rooting::*;
-use cgc::trace::*;
-
-struct Foo {
-    x: i32,
-    next: Option<Heap<Foo>>,
-}
-impl Traceable for Foo {
-    fn trace_with<'a>(&'a mut self, mut f: impl FnMut(&'a mut dyn HeapTrait)) {
-        match &mut self.next {
-            Some(x) => f(x),
-            _ => (),
-        }
-    }
-}
-
-impl Finalizer for Foo {
-    fn finalize(&mut self) {}
-}
+use cgc::block::*;
+use cgc::gc::*;
+use cgc::mem::*;
 
 fn main() {
-    simple_logger::init().unwrap();
-    let mut gc = GlobalCollector::new(1024 * 1024);
-    let mut x: Rooted<Vec<cgc::Heap<i32>>> = gc.alloc(vec![]);
-    let y = gc.alloc(42);
-
-    cgc::write_barrier(&x.to_heap(), &y.to_heap());
-    x.get_mut().push(y.to_heap());
+    let mut map = std::collections::HashSet::new();
+    let mem = commit(BLOCK_SIZE, false);
+    map.insert(mem.to_usize());
+    let mut b = Block::new(mem, BLOCK_SIZE);
+    println!("{:?}", mem.to_ptr::<*const u8>());
+    unsafe {
+        let val = b
+            .allocate(std::mem::size_of::<InnerGc<i32>>())
+            .unwrap()
+            .to_mut_ptr::<InnerGc<i32>>();
+        let val = &*val;
+        println!(
+            "{:?}",
+            map.contains(&(val as *const _ as *const u8 as usize))
+        );
+    }
 }

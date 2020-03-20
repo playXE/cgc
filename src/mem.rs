@@ -1,5 +1,20 @@
+/*
+*   Copyright (c) 2020 Adel Prokurov
+*   All rights reserved.
+*   Licensed under the Apache License, Version 2.0 (the "License");
+*   you may not use this file except in compliance with the License.
+*   You may obtain a copy of the License at
+*   http://www.apache.org/licenses/LICENSE-2.0
+*   Unless required by applicable law or agreed to in writing, software
+*   distributed under the License is distributed on an "AS IS" BASIS,
+*   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+*   See the License for the specific language governing permissions and
+*   limitations under the License.
+*/
+
 use std::cmp::*;
 use std::fmt;
+use std::sync::atomic::{AtomicPtr, Ordering};
 static mut PAGE_SIZE: usize = 0;
 static mut PAGE_SIZE_BITS: usize = 0;
 
@@ -523,11 +538,11 @@ impl Access {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Address(usize);
+pub struct Address(pub usize);
 
 impl Address {
     #[inline(always)]
-    pub fn from(val: usize) -> Address {
+    pub const fn from(val: usize) -> Address {
         Address(val)
     }
 
@@ -621,6 +636,28 @@ impl Address {
     #[inline(always)]
     pub const fn or(self, x: Address) -> Self {
         Self(self.0 | x.0)
+    }
+
+    pub fn deref(&self) -> Address {
+        unsafe {
+            assert!(self.is_non_null());
+            Address::from_ptr(*self.to_ptr::<*const u8>())
+        }
+    }
+    /// Atomically replaces the current pointer with the given one.
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::trivially_copy_pass_by_ref))]
+    pub fn atomic_store(&self, other: *mut u8) {
+        self.as_atomic().store(other, Ordering::Release);
+    }
+
+    /// Atomically loads the pointer.
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::trivially_copy_pass_by_ref))]
+    pub fn atomic_load(&self) -> *mut u8 {
+        self.as_atomic().load(Ordering::Acquire)
+    }
+
+    fn as_atomic(&self) -> &AtomicPtr<u8> {
+        unsafe { &*(self as *const Address as *const AtomicPtr<u8>) }
     }
 }
 
@@ -750,77 +787,17 @@ pub fn formatted_size(size: usize) -> FormattedSize {
     FormattedSize { size }
 }
 
-#[repr(transparent)]
-pub struct Ptr<T: ?Sized>(pub(crate) *mut T);
-
-impl<T: ?Sized> Ptr<T> {
-    pub fn get(&self) -> &mut T {
-        unsafe { &mut *self.0 }
+/*pub fn alloc<T>() -> *mut T {
+    unsafe {
+        let layout = std::alloc::Layout::new::<T>();
+        libmimalloc_sys::mi_malloc_aligned(layout.size() as _, layout.align() as _) as *const T
+            as *mut _
+    }
+    //unsafe { libc::malloc(std::mem::size_of::<T>()) as *mut _ }
+}
+pub fn free<T: ?Sized>(ptr: *mut T) {
+    unsafe {
+        libmimalloc_sys::mi_free(ptr as *const _);
     }
 }
-
-impl<T> Ptr<T> {
-    pub fn new(x: T) -> Self {
-        Self(Box::into_raw(Box::new(x)))
-    }
-
-    pub fn from_box(b: Box<T>) -> Self {
-        Self(Box::into_raw(b))
-    }
-
-    pub fn set(&self, val: T) {
-        unsafe { self.0.write(val) };
-    }
-
-    pub fn replace(&self, val: T) -> T {
-        std::mem::replace(self.get(), val)
-    }
-
-    pub fn take(&self) -> T
-    where
-        T: Default,
-    {
-        self.replace(T::default())
-    }
-
-    pub fn is_null(&self) -> bool {
-        self.0.is_null()
-    }
-
-    pub fn null() -> Self {
-        Self(std::ptr::null_mut())
-    }
-}
-
-use std::hash::*;
-
-impl<T> Hash for Ptr<T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
-    }
-}
-
-impl<T> PartialEq for Ptr<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl<T> Eq for Ptr<T> {}
-
-impl<T> Copy for Ptr<T> {}
-impl<T> Clone for Ptr<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> std::ops::Deref for Ptr<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        self.get()
-    }
-}
-
-unsafe impl<T> Send for Ptr<T> {}
-unsafe impl<T> Sync for Ptr<T> {}
+*/
