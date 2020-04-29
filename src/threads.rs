@@ -280,3 +280,35 @@ impl Threads {
 thread_local! {
     pub static THREAD: std::cell::RefCell<Arc<MutatorThread>> = std::cell::RefCell::new(Arc::new(MutatorThread::new()));
 }
+
+pub extern "C" fn attach_current_thread() {
+    crate::heap::HEAP.threads.attach_current_thread();
+}
+
+pub extern "C" fn detach_current_thread() {
+    crate::heap::HEAP.threads.attach_current_thread();
+}
+use crate::api::*;
+/// Use this function to allocate object in GC heap.
+///
+/// If value needs finalization `finalize` argument should be true.
+pub fn mt_alloc<T: Trace + Sized + 'static>(value: T, finalize: bool) -> Rooted<T> {
+    let mem = crate::heap::HEAP.allocate(value, finalize);
+    let rooted = Box::into_raw(Box::new(RootedInner {
+        rooted: true,
+        inner: mem,
+    }));
+
+    THREAD.with(|th| th.borrow().rootset.borrow_mut().push(rooted));
+
+    Rooted { inner: rooted }
+}
+
+pub fn mt_root<T: Trace + 'static + Sized>(handle: Handle<T>) -> Rooted<T> {
+    let rooted = Box::into_raw(Box::new(RootedInner {
+        rooted: true,
+        inner: handle.inner,
+    }));
+    THREAD.with(|th| th.borrow().rootset.borrow_mut().push(rooted));
+    Rooted { inner: rooted }
+}

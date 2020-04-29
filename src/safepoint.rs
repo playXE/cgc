@@ -76,3 +76,15 @@ where
     THREAD.with(|thread| thread.borrow().unpark());
     ret
 }
+
+pub extern "C" fn gc_guard() {
+    let thread = THREAD.with(|thread| thread.borrow().clone());
+    block(&thread);
+}
+
+#[macro_export]
+macro_rules! safepoint {
+    () => {
+        $crate::safepoint::gc_guard();
+    };
+}

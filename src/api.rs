@@ -52,7 +52,7 @@ unsafe impl<T: Traceable> Trace for T {
 pub unsafe trait HeapTrait {
     fn mark(&self);
     fn unmark(&self);
-    fn slot(&self) -> Address;
+
     fn get_fwd(&self) -> Address;
     fn set_fwd(&self, _: Address);
     fn copy_to(&self, addr: Address);
@@ -70,7 +70,11 @@ macro_rules! simple {
     ($($t: ty)*) => {
         $(
             impl Traceable for $t {}
-            impl Finalizer for $t {}
+            impl Finalizer for $t {
+                fn finalize(&mut self) {
+
+                }
+            }
         )*
     };
 }
@@ -174,7 +178,7 @@ pub struct Rooted<T: Trace + ?Sized> {
     pub(crate) inner: *mut RootedInner<T>,
 }
 
-impl<T: Trace + ?Sized> Rooted<T> {
+impl<T: Trace + Sized> Rooted<T> {
     fn inner(&self) -> &mut RootedInner<T> {
         unsafe { &mut *self.inner }
     }
@@ -182,10 +186,16 @@ impl<T: Trace + ?Sized> Rooted<T> {
         Handle::from(self)
     }
     pub fn get(&self) -> &T {
-        unsafe { &(&*self.inner().inner).value }
+        unsafe {
+            &(&*crate::heap::read_barrier_impl(self.inner().inner as *const _ as *mut _)).value
+        }
+        //unsafe { &(&*self.inner().inner).value }
     }
     pub fn get_mut(&self) -> &mut T {
-        unsafe { &mut (&mut *self.inner().inner).value }
+        unsafe {
+            &mut (&mut *crate::heap::read_barrier_impl(self.inner().inner as *const _ as *mut _))
+                .value
+        }
     }
 }
 
@@ -235,11 +245,7 @@ unsafe impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
             )
         }
     }
-    fn slot(&self) -> Address {
-        debug_assert!(!self.inner.is_null());
-        let slot = &self.inner;
-        Address::from_ptr(slot)
-    }
+
     fn addr(&self) -> Address {
         Address::from_ptr(self.inner as *const u8)
     }
@@ -264,7 +270,7 @@ impl<T: Trace + Sized + 'static> RootedTrait for RootedInner<T> {
 ///
 /// GC thing pointers on the heap must be wrapped in a `Handle<T>`
 pub struct Handle<T: Trace + ?Sized> {
-    inner: *mut crate::heap::HeapInner<T>,
+    pub(crate) inner: *mut crate::heap::HeapInner<T>,
 }
 impl<T: Trace + ?Sized> From<Rooted<T>> for Handle<T> {
     fn from(x: Rooted<T>) -> Self {
@@ -286,12 +292,12 @@ impl<T: Trace + ?Sized> From<&Rooted<T>> for Handle<T> {
     }
 }
 
-impl<T: Trace + ?Sized> Handle<T> {
+impl<T: Trace + Sized> Handle<T> {
     pub fn get(&self) -> &T {
         unsafe {
             debug_assert!(!self.inner.is_null());
-            let inner = &*self.inner;
-            &inner.value
+            let src = crate::heap::read_barrier_impl(self.inner as *const _ as *mut _);
+            &(&*src).value
         }
     }
 
@@ -305,8 +311,9 @@ impl<T: Trace + ?Sized> Handle<T> {
     ///
     pub fn get_mut(&mut self) -> &mut T {
         unsafe {
-            let inner = &mut *self.inner;
-            &mut inner.value
+            debug_assert!(!self.inner.is_null());
+            let src = crate::heap::read_barrier_impl(self.inner as *const _ as *mut _);
+            &mut (&mut *src).value
         }
     }
 }
@@ -341,11 +348,7 @@ unsafe impl<T: Trace + Sized + 'static> HeapTrait for Handle<T> {
             (&mut *self.inner).set_fwdptr(fwd);
         }
     }
-    fn slot(&self) -> Address {
-        debug_assert!(!self.inner.is_null());
-        let slot = &self.inner;
-        Address::from_ptr(slot)
-    }
+
     fn addr(&self) -> Address {
         Address::from_ptr(self.inner as *const u8)
     }
