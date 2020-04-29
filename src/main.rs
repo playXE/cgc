@@ -1,32 +1,26 @@
-extern crate cgc;
+extern crate cgc_single_threaded as cgc;
 
-use cgc::collector::*;
-use cgc::rooting::*;
-use cgc::trace::*;
+use cgc::api::*;
 
-struct Foo {
-    x: i32,
-    next: Option<Heap<Foo>>,
-}
+// Simple linked list.
+#[derive(Debug)]
+struct Foo(Option<Handle<Foo>>);
+
 impl Traceable for Foo {
-    fn trace_with<'a>(&'a mut self, mut f: impl FnMut(&'a mut dyn HeapTrait)) {
-        match &mut self.next {
-            Some(x) => f(x),
-            _ => (),
-        }
+    fn trace_with(&self, tracer: &mut Tracer) {
+        self.0.trace_with(tracer);
     }
 }
 
 impl Finalizer for Foo {
-    fn finalize(&mut self) {}
+    fn finalize(&mut self) {
+        println!("GCed");
+    }
 }
 
 fn main() {
-    simple_logger::init().unwrap();
-    let mut gc = GlobalCollector::new(1024 * 1024);
-    let mut x: Rooted<Vec<cgc::Heap<i32>>> = gc.alloc(vec![]);
-    let y = gc.alloc(42);
-
-    cgc::write_barrier(&x.to_heap(), &y.to_heap());
-    x.get_mut().push(y.to_heap());
+    let mut heap = cgc::heap::Heap::new(1024, 2048); // 1kb new space,2kb old space.
+    let value = heap.allocate(Foo(None));
+    let value2 = heap.allocate(Foo(Some(value.to_heap())));
+    println!("{:?}", value2);
 }

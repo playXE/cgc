@@ -1,34 +1,77 @@
 # cgc 
-cgc is a compacting garbage collector
+cgc is generational copying garbage collector.
+
+This branch implements signle-threaded version that does not have anything to deal with concurrency and synchronization.
+
+## Algorithm
+
+cgc uses semispace garbage collection to keep GC simple and generations to improve GC latency.
+
+## Who this crate is for
+- For people developing programming language runtime, no matter is language dynamically or statically typed.
+- Game developers where lot's of assets is loaded and some of them not cleared automatically.
+- For someone who is doing big & complex graph structures and do not want to mess with reference counting.
+- For people that deal with huge heaps and fragmentation, cgc removes fragmentation using copying garbage collection.
+
+## Logging support
+cgc supports logging. To alloc printing trace add feature `trace-gc` to features and to pring GC timings
+add `trace-gc-timings` feature.
+
+## Comparison to other GC crates
+### [broom](https://github.com/zesterer/broom)
+Advantages of `broom`:
+- Less dependencies (depends only on one crate `hashbrown`).
+- Very small & simple implementation.
 
 
-## How it works?
-### Mark-Sweep-Compact ( major collection ):
-This phase is the most important part in the GC, if heap is fragmented Mark-Compact may compact the heap so allocation is possible again. But as you understand we can't just always compact heap, for this there are `FreeList::fragmentation()` function, if return value is `>= 0.50` then GC enables compaction phase.
+Disadvantages of `broom`:
+- Mark'n Sweep algorithm. Mark&sweep may be really slow on huge heaps.
+- No memory defragmentation and generations. Without memory defragmentation it is really slow to allocate memory when heap is fragmented
+and without generations collections may be really slow since GC will collect *entire* heap.
+- No concurrent garbage collection support.
 
-- Marking 
+### [gc](https://github.com/Manishearth/rust-gc)
+Advantages of `gc`: 
+- No dependencies
+- Easy to make GC object,just use `#[derive(Trace)]`.
 
-    In this phase GC identifies live objects and mark them.
-- Sweeping
 
-    All objects that not marked in previous phase now "freed" and finalizers is invoked.
-- Compaction
+Disadvantages of `gc`: 
 
-    This phase computes forwarding pointers and then shifts objects to start of the heap.
-    This phase will not happen at every collection. Compaction occurs only when the heap is fragmented by more than fifty percent.
-### Incremental Mark&Sweep
-Incremental phase is perfomed only at `alloc` call and if heap size is bigger than threshold, but incremental collection may also occur when there are no memory left or allocation fails. To make this algorithm work correctly there are `cgc::write_barrier` function. The write barrier is a piece of code that runs just before a pointer store occurs and records just enough information to make sure that live objects don't get collected.
 
-- Marking
-    Mark all objects from `scan_list`
-- Sweeping
-    All "white" objects sweeped, black objects is alive, gray objects is now objects that will be scanned in the next collection.
+`gc` crate has the same disadvantages as `broom` crate, it uses mark'n sweep and does not have any memory defragmentation.
+## Usage
 
+cgc is simple to use all you have to do is implement `Traceable` and `Finalizer` for your type and you now have GC object!
+```rust
+extern crate cgc_single_threaded as cgc;
+
+use cgc::api::*;
+
+// Simple linked list.
+#[derive(Debug)]
+struct Foo(Option<Handle<Foo>>);
+
+impl Traceable for Foo {
+    fn trace_with(&self, tracer: &mut Tracer) {
+        self.0.trace_with(tracer);
+    }
+}
+
+impl Finalizer for Foo {
+    fn finalize(&mut self) {
+        println!("GCed");
+    }
+}
+
+fn main() {
+    let mut heap = cgc::heap::Heap::new(1024, 2048); // 1kb new space,2kb old space.
+    {
+        let value = heap.allocate(Foo(None));
+        let value2 = heap.allocate(Foo(Some(value.to_heap())));
+        println!("{:?}", value2);
+    }
+    heap.collect(); // value and value2 is GCed.
     
-## Allocation
-cgc uses simple bump and freelist allocation.
-When there are some memory for bump allocation then bump allocation will happen until bump pointer will reach heap end. When bump pointer is equal to heap end freelist starts it's work, if it fails then collection occurs and collection may compact heap so bump allocation will be possible again.
-
-## Thread-safety and blocking threads
-Current implementation doesn't block thread until thread tries to access GC pointer when collection happen in another thread, this means when collection happens other threads may do some other work that doesn't associated with GC. cgc itself does not provide any sync primitives, and you can't get "safe" access to one object from one thread from another thread.
-
+}
+```

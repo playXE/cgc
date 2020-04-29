@@ -10,28 +10,28 @@ So you can think that "GC Thing" is a thing that implements `Traceable` trait an
 ## GC thing on the stack
 
 - `Rooted<T>`:
-    All GC thing pointers stored on stack (i.e local variables and function parameters) must use the `cgc::rooting::Rooted<T>`.
-    This is RAII structure returned from `gc.alloc` (`gc_alloc` if you use static collector) that gets destroyed at end of the scope. You could also use `Arc` or `Rc` with `Rooted<T>`.
+    All GC thing pointers stored on stack (i.e local variables and function parameters) must use the `api::Rooted<T>`.
+    This is RAII structure returned from `gc.alloc` that gets destroyed at end of the scope. You could also use `Arc` or `Rc` with `Rooted<T>`.
 
     Example:
     ```rust
-    let mut gc = GlobalCollector::new(1024 * 4); // 4kb heap
+    let mut gc = Heap::new(1024 * 4,2*1024); // 4kb new space and 2 kb old space
     { /* scope start */
         let foo: Rooted<i32> = gc.alloc(42);
         // do something with foo...
     } /* scope end */
     gc.collect();
     ```
-    As you can see we allocate `i32` on GC heap and then we can do somethign with it. When we done with `foo` it will reach scope end or you can just use `drop(foo)` but you actually shouldn't use `drop(foo)` if you already use GC. After scope end we also invoke `gc.collect()` (`gc_collect` if you use static collector), this function will trigger garbage collection cycle and will sweep `foo` ( "free" it)
+    As you can see we allocate `i32` on GC heap and then we can do something with it. When we done with `foo` it will reach scope end or you can just use `drop(foo)` but you actually shouldn't use `drop(foo)` if you already use GC. After scope end we also invoke `gc.collect()`, this function will trigger garbage collection cycle and will finalize `foo`.
 
 ## GC things on the heap
-- `Heap<T>`:
+- `Handle<T>`:
 
-    GC thing pointers on the heap must be wrapped in `Heap<T>`. `Heap<T>` **pointers must also continue to be traced in the normal way**, which is covered below.
+    GC thing pointers on the heap must be wrapped in `Handle<T>`. `Handle<T>` **pointers must also continue to be traced in the normal way**, which is covered below.
     
-    `Heap<T>` doesn't require invoking `gc.alloc`(`gc_alloc`), and can be constructed from `Rooted<T>` using `Heap::from` or `Rooted::<T>::to_heap`
+    `Handle<T>` doesn't require invoking `gc.alloc`, and can be constructed from `Rooted<T>` using `Handle::from` or `Rooted::<T>::to_heap`
 
-    There are `Heap::get` and `Heap::get_mut` that user could use to get access to value. It's UB to access gc'ed value.
+    There are `Handle::get` and `Handle::get_mut` that user could use to get access to value. It's UB to access gc'ed value.
 
 # Tracing
 - 
