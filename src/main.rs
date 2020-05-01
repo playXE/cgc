@@ -19,8 +19,11 @@ impl Finalizer for Foo {
 }
 
 fn main() {
-    let mut heap = cgc::heap::Heap::new(1024, 2048); // 1kb new space,2kb old space.
-    let value = heap.allocate(Foo(None));
-    let value2 = heap.allocate(Foo(Some(value.to_heap())));
-    println!("{:?}", value2);
+    let mut heap = cgc::heap::Heap::new(1024, 2048, true); // 1kb new space,2kb old space.
+    {
+        let value = heap.allocate(Foo(None));
+        let value2 = heap.allocate(Foo(Some(value.to_heap())));
+        println!("{:?}", value2);
+    }
+    heap.collect();
 }

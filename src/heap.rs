@@ -101,6 +101,8 @@ pub struct Heap {
     needs_gc: GCType,
     heap: Vec<*mut HeapInner<dyn Trace>>,
     rootset: Vec<RootHandle>,
+    /// If this value is true then when heap is dropped GC cycle is performed to drop all values.
+    pub do_gc_after_drop: bool,
 }
 
 impl Heap {
@@ -112,8 +114,9 @@ impl Heap {
         self.rootset.push(RootHandle(root));
         Rooted { inner: root }
     }
-    pub fn new(new_page_size: usize, old_page_size: usize) -> Heap {
+    pub fn new(new_page_size: usize, old_page_size: usize, do_gc_after_drop: bool) -> Heap {
         Self {
+            do_gc_after_drop,
             new_space: Space::new(page_align(new_page_size)),
             old_space: Space::new(page_align(old_page_size)),
             needs_gc: GCType::None,
@@ -373,5 +376,16 @@ impl<'a> Collection<'a> {
     fn is_in_current_space(&self, val: &mut HeapInner<dyn Trace>) -> bool {
         (self.gc_type == GCType::OldSpace && val.generation() >= 5)
             || (self.gc_type == GCType::NewSpace && val.generation() < 5)
+    }
+}
+
+impl Drop for Heap {
+    fn drop(&mut self) {
+        self.heap.iter().for_each(|item| unsafe {
+            (&mut **item).value.finalize();
+            std::ptr::drop_in_place(*item);
+        });
+        self.old_space.clear();
+        self.new_space.clear();
     }
 }
