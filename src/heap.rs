@@ -104,6 +104,14 @@ pub struct Heap {
 }
 
 impl Heap {
+    pub fn root<T: Trace + Sized + 'static>(&mut self, value: Handle<T>) -> Rooted<T> {
+        let root: *mut RootedInner<T> = Box::into_raw(Box::new(RootedInner {
+            counter: 1,
+            inner: value.inner,
+        }));
+        self.rootset.push(RootHandle(root));
+        Rooted { inner: root }
+    }
     pub fn new(new_page_size: usize, old_page_size: usize) -> Heap {
         Self {
             new_space: Space::new(page_align(new_page_size)),
@@ -113,6 +121,7 @@ impl Heap {
             rootset: vec![],
         }
     }
+
     pub fn allocate<T: Trace + 'static>(&mut self, value: T) -> Rooted<T> {
         let mut needs_gc = false;
         let memory = self
@@ -132,7 +141,7 @@ impl Heap {
         }
 
         let root = Box::into_raw(Box::new(RootedInner {
-            rooted: true,
+            counter: 1,
             inner: inner,
         }));
         self.rootset.push(RootHandle(root));

@@ -178,8 +178,10 @@ impl<T: Trace + ?Sized> Rooted<T> {
     fn inner(&self) -> &mut RootedInner<T> {
         unsafe { &mut *self.inner }
     }
-    pub fn to_heap(self) -> Handle<T> {
-        Handle::from(self)
+    pub fn to_heap(&self) -> Handle<T> {
+        Handle {
+            inner: self.inner().inner,
+        }
     }
     pub fn get(&self) -> &T {
         unsafe { &(&*self.inner().inner).value }
@@ -190,7 +192,7 @@ impl<T: Trace + ?Sized> Rooted<T> {
 }
 
 pub(crate) struct RootedInner<T: Trace + ?Sized> {
-    pub(crate) rooted: bool,
+    pub(crate) counter: u32,
     pub(crate) inner: *mut crate::heap::HeapInner<T>,
 }
 impl<T: Trace + ?Sized> Drop for Rooted<T> {
@@ -198,7 +200,19 @@ impl<T: Trace + ?Sized> Drop for Rooted<T> {
         unsafe {
             debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
-            inner.rooted = false;
+            inner.counter = inner.counter.wrapping_sub(1);
+        }
+    }
+}
+
+impl<T: Trace + ?Sized> Clone for Rooted<T> {
+    fn clone(&self) -> Self {
+        unsafe {
+            let inner = &mut *self.inner;
+            inner.counter = inner.counter + 1;
+            Rooted {
+                inner: inner as *mut _,
+            }
         }
     }
 }
@@ -253,7 +267,7 @@ unsafe impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
 
 impl<T: Trace + Sized + 'static> RootedTrait for RootedInner<T> {
     fn is_rooted(&self) -> bool {
-        self.rooted
+        self.counter >= 1
     }
     fn references(&self) -> SmallVec<[*const dyn HeapTrait; 64]> {
         unsafe { (&*self.inner).value.references() }
@@ -264,7 +278,7 @@ impl<T: Trace + Sized + 'static> RootedTrait for RootedInner<T> {
 ///
 /// GC thing pointers on the heap must be wrapped in a `Handle<T>`
 pub struct Handle<T: Trace + ?Sized> {
-    inner: *mut crate::heap::HeapInner<T>,
+    pub(crate) inner: *mut crate::heap::HeapInner<T>,
 }
 impl<T: Trace + ?Sized> From<Rooted<T>> for Handle<T> {
     fn from(x: Rooted<T>) -> Self {
