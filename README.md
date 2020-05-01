@@ -14,7 +14,7 @@ cgc uses semispace garbage collection to keep GC simple and generations to impro
 - For people that deal with huge heaps and fragmentation, cgc removes fragmentation using copying garbage collection.
 
 ## Logging support
-cgc supports logging. To alloc printing trace add feature `trace-gc` to features and to pring GC timings
+cgc supports logging. To alloц printing trace add feature `trace-gc` to features and to pring GC timings
 add `trace-gc-timings` feature.
 
 ## Comparison to other GC crates
