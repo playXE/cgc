@@ -1,6 +1,6 @@
 [package]
 name = "cgc-single-threaded"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Adel prokurov <adel.prokurov@protonmail.com>"]
 edition = "2018"
 description = "Compacting garbage collector"
