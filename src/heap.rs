@@ -262,11 +262,18 @@ impl<'a> Collection<'a> {
         while let Some(item) = self.black_set.pop() {
             item.value().reset_soft_mark();
         }
+        let mut seen = std::collections::HashSet::new();
         for root in self.heap.rootset.iter() {
             unsafe {
-                self.new_heap.push((&*root.0).inner());
-                for r in (&*root.0).references() {
-                    self.new_heap.push((&*r).inner());
+                if !seen.contains(&((&*root.0).inner() as *mut u8 as usize)) {
+                    seen.insert((&*root.0).inner() as *mut u8 as usize);
+                    self.new_heap.push((&*root.0).inner());
+                    for r in (&*root.0).references() {
+                        if !seen.contains(&((&*r).inner() as *mut u8 as usize)) {
+                            self.new_heap.push((&*r).inner());
+                            seen.insert((&*r).inner() as *mut u8 as usize);
+                        }
+                    }
                 }
             }
         }
@@ -336,7 +343,7 @@ impl<'a> Collection<'a> {
                     if !value.value().is_soft_marked() {
                         value.value().set_soft_mark();
                         self.visit(value.value());
-                        self.new_heap.push(value.value());
+                        //self.new_heap.push(value.value());
                         self.black_set.push(value);
                     }
                     continue;
@@ -381,10 +388,20 @@ impl<'a> Collection<'a> {
 
 impl Drop for Heap {
     fn drop(&mut self) {
-        self.heap.iter().for_each(|item| unsafe {
-            (&mut **item).value.finalize();
-            std::ptr::drop_in_place(*item);
-        });
+        log::warn!("Dropping heap.");
+        if self.do_gc_after_drop {
+            let mut seen = std::collections::HashSet::new();
+            self.heap
+                .iter()
+                .for_each(|item: &*mut HeapInner<dyn Trace>| unsafe {
+                    let p = (*item) as *mut u8 as usize;
+                    assert!(!seen.contains(&p), "already seen 0x{:x}", p);
+                    log::warn!("Finalize 0x{:x}.", p);
+                    (&mut **item).value.finalize();
+                    std::ptr::drop_in_place(*item);
+                    seen.insert(p);
+                });
+        }
         self.old_space.clear();
         self.new_space.clear();
     }
