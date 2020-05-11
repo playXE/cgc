@@ -496,3 +496,35 @@ impl<T: Traceable> DerefMut for Handle<T> {
         self.get_mut()
     }
 }
+
+use std::collections::*;
+
+impl<K: Traceable + Eq, V: Traceable> Traceable for HashMap<K, V> {
+    fn trace_with(&self, x: &mut Tracer) {
+        for (k, v) in self.iter() {
+            k.trace_with(x);
+            v.trace_with(x);
+        }
+    }
+}
+impl<K, V> Finalizer for HashMap<K, V> {}
+
+impl<K> Finalizer for HashSet<K> {}
+
+impl<K: Traceable + Eq> Traceable for HashSet<K> {
+    fn trace_with(&self, x: &mut Tracer) {
+        for k in self.iter() {
+            k.trace_with(x);
+        }
+    }
+}
+
+impl<T: Traceable> Traceable for LinkedList<T> {
+    fn trace_with(&self, t: &mut Tracer) {
+        for x in self.iter() {
+            x.trace_with(t);
+        }
+    }
+}
+
+impl<T> Finalizer for LinkedList<T> {}
