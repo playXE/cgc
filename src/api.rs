@@ -198,7 +198,7 @@ pub(crate) struct RootedInner<T: Trace + ?Sized> {
 impl<T: Trace + ?Sized> Drop for Rooted<T> {
     fn drop(&mut self) {
         unsafe {
-            debug_assert!(!self.inner.is_null());
+            ////debug_assert!(!self.inner.is_null());
             let inner = &mut *self.inner;
             inner.counter = inner.counter.wrapping_sub(1);
         }
@@ -240,7 +240,7 @@ unsafe impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
     }
 
     fn copy_to(&self, addr: Address) {
-        debug_assert!(addr.is_non_null() && !self.inner.is_null());
+        ////debug_assert!(addr.is_non_null() && !self.inner.is_null());
         unsafe {
             std::ptr::copy(
                 self.inner as *const u8,
@@ -250,7 +250,7 @@ unsafe impl<T: Trace + Sized + 'static> HeapTrait for RootedInner<T> {
         }
     }
     fn slot(&self) -> Address {
-        debug_assert!(!self.inner.is_null());
+        ////debug_assert!(!self.inner.is_null());
         let slot = &self.inner;
         Address::from_ptr(slot)
     }
@@ -303,7 +303,7 @@ impl<T: Trace + ?Sized> From<&Rooted<T>> for Handle<T> {
 impl<T: Trace + ?Sized> Handle<T> {
     pub fn get(&self) -> &T {
         unsafe {
-            debug_assert!(!self.inner.is_null());
+            //debug_assert!(!self.inner.is_null());
             let inner = &*self.inner;
             &inner.value
         }
@@ -327,7 +327,7 @@ impl<T: Trace + ?Sized> Handle<T> {
 
 unsafe impl<T: Trace + Sized + 'static> HeapTrait for Handle<T> {
     fn copy_to(&self, addr: Address) {
-        debug_assert!(addr.is_non_null() && !self.inner.is_null());
+        //debug_assert!(addr.is_non_null() && !self.inner.is_null());
         unsafe {
             std::ptr::copy(
                 self.inner as *const u8,
@@ -356,7 +356,7 @@ unsafe impl<T: Trace + Sized + 'static> HeapTrait for Handle<T> {
         }
     }
     fn slot(&self) -> Address {
-        debug_assert!(!self.inner.is_null());
+        //debug_assert!(!self.inner.is_null());
         let slot = &self.inner;
         Address::from_ptr(slot)
     }
